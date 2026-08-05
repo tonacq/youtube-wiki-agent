@@ -1,0 +1,27 @@
+{
+  "vault_name": "REPLACE_ME",
+  "channel_url": "",
+  "creator": "",
+  "creator_page": "",
+  "max_videos": 80,
+  "max_transcript_attempts": 3,
+  "caption_languages": ["en-orig", "en"],
+  "yt_dlp_path": "yt-dlp",
+  "proxy": "",
+  "cookie_file": "",
+  "js_runtime": "",
+  "drive_remote": "gdrive",
+  "drive_path": "",
+  "claude_effort": "high",
+  "claude_budget_usd": 10,
+  "documents": {
+    "enabled": true,
+    "supported_extensions": [".pdf", ".docx", ".md", ".txt"]
+  },
+  "backup": {
+    "enabled": true,
+    "remote": "gdrive",
+    "destination": "",
+    "keep": 12
+  }
+}

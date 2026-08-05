@@ -1,0 +1,10 @@
+# Vault runtime content - never committed, contains real channel/creator details
+vaults/*
+!vaults/_template
+
+# Local-only scheduling config - contains real vault names, see schedule.csv.example
+agent/scheduling/schedule.csv
+
+# Session-local operational artifacts
+agent/scheduling/dispatch-logs/
+conformance-report*.json

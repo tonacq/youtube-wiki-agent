@@ -1,0 +1,13 @@
+[Unit]
+Description=WikiAgent multi-vault dispatcher (reads schedule.csv, runs due vaults)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+WorkingDirectory=/home/ubuntu/wiki-agent-multivault
+ExecStart=/home/ubuntu/wiki-agent-multivault/agent/scheduling/ubuntu/run-wikiagent.sh
+TimeoutStartSec=6h

@@ -1,0 +1,3 @@
+vault_name,job_type,day_of_week,time_utc,enabled
+example_channel_full,full,Sat,17:00,false
+example_channel_lint,lint-review,Sat,20:00,false
