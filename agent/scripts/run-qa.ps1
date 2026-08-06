@@ -84,15 +84,47 @@ if (Test-Path -LiteralPath $resultFile) {
 # video_id token and corrects the pointer. An absent or ambiguous match is left alone
 # (surfaced via the existing missingSourcePages warning below) rather than guessed at,
 # so this stays safe to run unattended.
+#
+# Two lookup strategies, in that order:
+#   1. Filename-embedded video_id (the date_videoid_slug.md convention).
+#   2. Frontmatter video_id field, for pages that predate that filename convention
+#      (confirmed present - exact string, both schemas found on disk: the
+#      Claude-Code-rewritten schema using type/creator/platform, and the untouched
+#      mechanically-generated schema using video_id/source_type/title) - used only
+#      as a fallback when (1) finds zero or more than one match. Exact match only;
+#      never fuzzy/slug/title matching.
 $sourceFileReconciled = 0
 $sourcesDir = Join-Path $VaultRoot 'wiki/sources'
 if (Test-Path -LiteralPath $sourcesDir) {
+    # Built once, up front - every source page's frontmatter is read at most once
+    # regardless of how many manifest rows need reconciling this run.
+    $frontmatterVideoIdMap = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $sourcesDir -Filter '*.md' -ErrorAction SilentlyContinue) {
+        $raw = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $raw -or $raw -notmatch '(?s)^---\r?\n(.*?)\r?\n---\r?\n') { continue }
+        $fm = $Matches[1]
+        if ($fm -notmatch '(?m)^video_id:\s*"?([A-Za-z0-9_-]+)"?\s*$') { continue }
+        $vid = $Matches[1]
+        if (-not $frontmatterVideoIdMap.ContainsKey($vid)) {
+            $frontmatterVideoIdMap[$vid] = New-Object System.Collections.Generic.List[string]
+        }
+        $frontmatterVideoIdMap[$vid].Add($file.FullName)
+    }
+
     foreach ($row in $manifest) {
         if ($row.ingest_status -ne 'ingested') { continue }
         if ($row.source_file -and (Test-Path -LiteralPath $row.source_file)) { continue }
+
+        $resolved = $null
         $onDiskMatches = @(Get-ChildItem -LiteralPath $sourcesDir -Filter "*_$($row.video_id)_*.md" -ErrorAction SilentlyContinue)
         if ($onDiskMatches.Count -eq 1) {
-            $row.source_file = $onDiskMatches[0].FullName
+            $resolved = $onDiskMatches[0].FullName
+        } elseif ($frontmatterVideoIdMap.ContainsKey($row.video_id) -and $frontmatterVideoIdMap[$row.video_id].Count -eq 1) {
+            $resolved = $frontmatterVideoIdMap[$row.video_id][0]
+        }
+
+        if ($resolved) {
+            $row.source_file = $resolved
             $sourceFileReconciled++
             $changed++
         }
