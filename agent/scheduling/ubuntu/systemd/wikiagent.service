@@ -8,6 +8,6 @@ Type=oneshot
 User=ubuntu
 Group=ubuntu
 Environment=HOME=/home/ubuntu
-WorkingDirectory=/home/ubuntu/wiki-agent-multivault
-ExecStart=/home/ubuntu/wiki-agent-multivault/agent/scheduling/ubuntu/run-wikiagent.sh
+WorkingDirectory=/home/ubuntu/WikiAgent
+ExecStart=/home/ubuntu/WikiAgent/agent/scheduling/ubuntu/run-wikiagent.sh
 TimeoutStartSec=6h
