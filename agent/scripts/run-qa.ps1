@@ -74,6 +74,89 @@ if (Test-Path -LiteralPath $resultFile) {
     }
 }
 
+# Disk-truth reconciliation fallback: a standing safety net for interrupted synthesis
+# runs. run-claude-synthesis.ps1 only writes working/temp/synthesis-result.json when an
+# ENTIRE batch finishes (config/claude.md step 3-4 instructs updating
+# wiki/synthesis/synthesis_register.md only "with the batch you just completed" too -
+# same blind spot), so a session interrupted mid-batch leaves genuinely-completed work
+# permanently invisible to the manifest via the block above alone. This scans the real
+# downstream output directories directly - unconditionally, independent of whether a
+# result file exists at all - for any row still synthesis_status = pending despite
+# ingest_status already = ingested.
+#
+# Deliberately does NOT scan wiki/sources/: create-source-pages.ps1 writes that
+# mechanical stub unconditionally, before Claude ever runs, so a file existing there
+# proves nothing about whether real synthesis happened (confirmed empirically - a
+# genuinely-included row's own source page is byte-identical in structure to a
+# still-pending stub, differing only in a frontmatter value that this same script's
+# Sync-SourcePageFrontmatter function writes, downstream of this same result-file gate).
+# Only concepts/, tools/, workflows/, and synthesis/ contain content Claude itself
+# produces.
+#
+# Only ever reached for 'full' job runs - lint-review jobs never invoke run-qa.ps1 at
+# all (see run-vault.ps1's JobType branch), so no internal mode check is needed here.
+$fallbackDirs = @('concepts', 'tools', 'workflows', 'synthesis') |
+    ForEach-Object { Join-Path $VaultRoot "wiki/$_" } |
+    Where-Object { Test-Path -LiteralPath $_ }
+
+$diskReconciled = 0
+if ($fallbackDirs.Count -gt 0) {
+    $candidateFiles = @(Get-ChildItem -LiteralPath $fallbackDirs -Filter '*.md' -Recurse -ErrorAction SilentlyContinue)
+
+    # Read every candidate file's content exactly once, up front - same "build once,
+    # reuse per row" pattern already used above for the frontmatter video_id map
+    # (lines 101-112) - so file reads stay bounded by file count regardless of how many
+    # pending rows are checked against them, not O(rows x files).
+    $candidateContents = @(
+        foreach ($file in $candidateFiles) {
+            $raw = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+            if ($raw) { [pscustomobject]@{ Path = $file.FullName; Raw = $raw } }
+        }
+    )
+
+    foreach ($row in $manifest) {
+        if ($row.ingest_status -ne 'ingested') { continue }
+        if ($row.synthesis_status -eq 'included') { continue }  # Finding D: never downgrade / never re-touch
+
+        $escapedId = [regex]::Escape($row.video_id)
+        # Exact match only, no fuzzy matching - same principle as the source_file
+        # fallback above: a frontmatter video_id field (mirrors that block's own regex),
+        # or the bare id elsewhere in the file bounded by non-identifier characters
+        # (covers the inline-link style, e.g. "...(CkoJauJIyQs)").
+        $frontmatterPattern = '(?m)^video_id:\s*"?' + $escapedId + '"?\s*$'
+        $bodyPattern        = '(?<![A-Za-z0-9_-])' + $escapedId + '(?![A-Za-z0-9_-])'
+
+        $matchedFile = $null
+        foreach ($candidate in $candidateContents) {
+            $raw = $candidate.Raw
+            if (-not (($raw -match $frontmatterPattern) -or ($raw -match $bodyPattern))) { continue }
+
+            # Malformed/partial-page guard: require a closed frontmatter block (the same
+            # regex Sync-SourcePageFrontmatter already uses below) plus non-trivial body
+            # content after it - rejects a file truncated mid-write by an interrupt.
+            # Deliberately no word-count or other arbitrary threshold beyond this - a
+            # page that finished valid frontmatter and some body before being cut off
+            # would still pass; that residual risk is accepted, not solved, here.
+            if ($raw -notmatch '(?s)^(---\r?\n.*?\r?\n---\r?\n)') { continue }
+            $body = $raw.Substring($matches[1].Length).Trim()
+            if ([string]::IsNullOrWhiteSpace($body)) { continue }
+
+            $matchedFile = $candidate.Path
+            break
+        }
+
+        if ($matchedFile) {
+            $row.synthesis_status       = 'included'
+            $row.synthesis_last_checked = (Get-Date).ToString('yyyy-MM-dd')
+            $row.synthesis_evidence     = $matchedFile
+            $row.synthesis_batch        = 'disk-reconciliation-fallback'
+            $row.last_updated           = (Get-Date).ToString('o')
+            $changed++
+            $diskReconciled++
+        }
+    }
+}
+
 # Reconcile stale source_file pointers: create-source-pages.ps1 records a fixed
 # wiki/sources/<slug>.md path when it first creates a source page, but
 # run-claude-synthesis.ps1's headless Claude Code invocation is free to rename or
@@ -175,6 +258,7 @@ $missingSourcePages = @($manifest | Where-Object { $_.ingest_status -eq 'ingeste
 
 Write-Host "QA reconciliation complete."
 Write-Host "  Rows updated to included: $includedTransitions"
+Write-Host "  Rows recovered via disk-truth fallback (no result file): $diskReconciled"
 Write-Host "  Rows with source_file path reconciled: $sourceFileReconciled"
 Write-Host "  Rows with missing source pages: $missingSourcePages"
 Write-Host "  Pages with template artefacts remaining: $templateArtefacts"
@@ -193,6 +277,7 @@ $qaResultPath = Join-Path $VaultRoot 'working/temp/qa-result.json'
 New-Item -ItemType Directory -Force -Path (Split-Path -Path $qaResultPath -Parent) | Out-Null
 [ordered]@{
     rowsChanged        = $changed
+    diskReconciled     = $diskReconciled
     frontmatterUpdated = $frontmatterUpdated
     timestamp          = (Get-Date).ToString('o')
 } | ConvertTo-Json | Out-File -LiteralPath $qaResultPath -Encoding utf8 -Force
