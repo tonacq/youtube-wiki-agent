@@ -145,6 +145,20 @@ if ($fallbackDirs.Count -gt 0) {
             break
         }
 
+        # Known, accepted limitation (not fixed here): this matching logic cannot
+        # distinguish genuine per-video synthesis from a bare video_id citation inside a
+        # shared/cumulative page (e.g. a tool reference page cited by many videos, built up
+        # incrementally across multiple batches). Investigated (B4) after a real production
+        # run recovered 49 rows via just 22 shared files; all 49 were independently verified
+        # correct that time via a coincidental corroborating artifact (per-video extraction-
+        # notes files) that is NOT a guaranteed convention - confirmed (B5 Part 1) absent
+        # from config/claude.md and every vault template, so it cannot be relied on as a
+        # check. A future interrupted run with heavy citation-sharing could theoretically
+        # produce a false-positive inclusion this fallback has no way to detect. Real fix
+        # would need either (a) a synthesis prompt/output-contract change adding explicit
+        # per-source markers inside wiki pages themselves (its own track, not a run-qa.ps1
+        # tweak), or (b) a mandated, enforced extraction-notes convention added to claude.md
+        # across all vault templates. Neither is implemented as of this commit.
         if ($matchedFile) {
             $row.synthesis_status       = 'included'
             $row.synthesis_last_checked = (Get-Date).ToString('yyyy-MM-dd')
