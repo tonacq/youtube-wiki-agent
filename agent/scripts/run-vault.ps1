@@ -195,17 +195,40 @@ if (Test-Path -LiteralPath $qaResultPath) {
 
 # Read ingest-youtube.ps1's structured result (if it ran this pass) so notifications can
 # report accurate this-run ingestion stats without re-deriving them. Missing/unreadable
-# file (e.g. -SkipYoutube, or a vault with no channel_url) defaults to zeros.
+# file (e.g. -SkipYoutube, or a vault with no channel_url) defaults to zeros/nulls.
 $ingestResultPath = Join-Path $VaultRoot 'working/temp/ingest-result.json'
 $ingestResult = [ordered]@{ scanned = 0; newIngested = 0; retried = 0; parkedThisRun = 0; skippedAlreadyParked = 0 }
+$ingestReasonCode = $null
+$catalogueCount = 0
 if (Test-Path -LiteralPath $ingestResultPath) {
     try {
         $parsed = Get-Content -LiteralPath $ingestResultPath -Raw | ConvertFrom-Json
         foreach ($key in @('scanned', 'newIngested', 'retried', 'parkedThisRun', 'skippedAlreadyParked')) {
             if ($parsed.PSObject.Properties[$key]) { $ingestResult[$key] = [int]$parsed.$key }
         }
+        if ($parsed.PSObject.Properties['reasonCode']) { $ingestReasonCode = [string]$parsed.reasonCode }
+        if ($parsed.PSObject.Properties['catalogueCount']) { $catalogueCount = [int]$parsed.catalogueCount }
     } catch {
         Write-Warning "Could not parse ingest-result.json for stats: $($_.Exception.Message)"
+    }
+}
+
+# Read run-claude-synthesis.ps1's structured batching result (if it ran this pass).
+# Missing/unreadable file (e.g. -SkipClaude, or nothing was pending) defaults to null/zeros.
+$synthResultPath = Join-Path $VaultRoot 'working/temp/synthesis-run-result.json'
+$synthReasonCode = $null
+$synthActualSynthesized = 0
+$synthTargetThisRun = 0
+$synthErrorSnippet = ''
+if (Test-Path -LiteralPath $synthResultPath) {
+    try {
+        $parsedSynth = Get-Content -LiteralPath $synthResultPath -Raw | ConvertFrom-Json
+        if ($parsedSynth.PSObject.Properties['reasonCode'] -and $parsedSynth.reasonCode) { $synthReasonCode = [string]$parsedSynth.reasonCode }
+        if ($parsedSynth.PSObject.Properties['actualSynthesized']) { $synthActualSynthesized = [int]$parsedSynth.actualSynthesized }
+        if ($parsedSynth.PSObject.Properties['targetThisRun']) { $synthTargetThisRun = [int]$parsedSynth.targetThisRun }
+        if ($parsedSynth.PSObject.Properties['errorSnippet']) { $synthErrorSnippet = [string]$parsedSynth.errorSnippet }
+    } catch {
+        Write-Warning "Could not parse synthesis-run-result.json for stats: $($_.Exception.Message)"
     }
 }
 
@@ -217,6 +240,10 @@ $manifestIncluded = 0
 $manifestPending = 0
 $manifestParked = 0
 $manifestTransientFailed = 0
+$manifestBacklog = 0
+$manifestFailedBlocked = 0
+$manifestMissingTranscript = 0
+$manifestFailedOther = 0
 if (Test-Path -LiteralPath $manifestPath) {
     try {
         $manifestRows = @(Import-Csv -LiteralPath $manifestPath)
@@ -225,6 +252,16 @@ if (Test-Path -LiteralPath $manifestPath) {
         $manifestPending = @($manifestRows | Where-Object { $_.synthesis_status -eq 'pending' -and $_.transcript_status -ne 'parked' }).Count
         $manifestParked = @($manifestRows | Where-Object { $_.transcript_status -eq 'parked' }).Count
         $manifestTransientFailed = @($manifestRows | Where-Object { $_.transcript_status -like 'missing*' -or $_.transcript_status -like 'failed*' }).Count
+        # Backlog measured NOW (post-run), distinct from ingest-youtube.ps1's own
+        # "carryover" figure, which is the same quantity measured BEFORE this run - used
+        # only for this run's ingestion-target math, not for this stats snapshot.
+        $manifestBacklog = @($manifestRows | Where-Object { $_.ingest_status -eq 'ingested' -and $_.synthesis_status -eq 'pending' }).Count
+        # transcript_status ∈ {failed_blocked, failed, missing_transcript} implies
+        # transcript_attempts < max (confirmed via code: reaching the cap always
+        # overwrites status to 'parked') - no separate attempts filter needed here.
+        $manifestFailedBlocked = @($manifestRows | Where-Object { $_.transcript_status -eq 'failed_blocked' }).Count
+        $manifestMissingTranscript = @($manifestRows | Where-Object { $_.transcript_status -eq 'missing_transcript' }).Count
+        $manifestFailedOther = @($manifestRows | Where-Object { $_.transcript_status -eq 'failed' }).Count
     } catch {
         Write-Warning "Could not parse manifest.csv for stats snapshot: $($_.Exception.Message)"
     }
@@ -249,22 +286,97 @@ $failedStageNames = @($stageResults.Keys | Where-Object { $stageResults[$_] -lik
 $criticalFailed = @($failedStageNames | Where-Object { $softStageNames -notcontains $_ })
 $softFailed     = @($failedStageNames | Where-Object { $softStageNames -contains $_ })
 
-if ($criticalFailed.Count -gt 0) {
-    $detail = "Critical stage(s) failed: $($criticalFailed -join ', ')"
+# ingest-youtube/run-claude-synthesis are excluded here even if Invoke-Stage marked them
+# FAILED (e.g. INGEST_BLOCKED/INGEST_ERROR threw after writing a real reason code) -
+# those are now reported via the richer RunSummary message below, not the older generic
+# Failed event, for JobType=full runs specifically.
+$criticalFailedOutsideReasonCoded = @($criticalFailed | Where-Object { $_ -ne 'ingest-youtube' -and $_ -ne 'run-claude-synthesis' })
+
+if ($JobType -eq 'lint-review') {
+    # Unchanged from before this brief - lint-review has no reason-code/batching concept.
+    if ($criticalFailed.Count -gt 0) {
+        $detail = "Critical stage(s) failed: $($criticalFailed -join ', ')"
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event Failed -ExitCode '1' -LogFile $resultFile -Detail $detail -Stats $statsJson
+        Write-Host "PIPELINE_RESULT: PARTIAL_FAILURE ($VaultName)"
+        exit 1
+    } elseif ($softFailed.Count -gt 0) {
+        $detail = "Non-critical stage(s) had an issue (real content work still succeeded): $($softFailed -join ', ')"
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event PartialSuccess -LogFile $resultFile -Detail $detail -Stats $statsJson
+        Write-Host "PIPELINE_RESULT: PARTIAL_SUCCESS ($VaultName)"
+        exit 0
+    } elseif ($qaRowsChanged -gt 0) {
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event Success -LogFile $resultFile -Stats $statsJson
+        Write-Host "PIPELINE_RESULT: SUCCESS ($VaultName)"
+        exit 0
+    } else {
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event NoChange -LogFile $resultFile -Stats $statsJson
+        Write-Host "PIPELINE_RESULT: NO_CHANGE ($VaultName)"
+        exit 0
+    }
+}
+
+# JobType = 'full' from here on.
+if ($criticalFailedOutsideReasonCoded.Count -gt 0) {
+    # A stage outside ingestion/synthesis failed critically (e.g. backup-vault,
+    # create-source-pages) - not covered by any of the 9 reason codes; keep the existing
+    # Failed event for this, unchanged in shape from before this brief.
+    $detail = "Critical stage(s) failed: $($criticalFailedOutsideReasonCoded -join ', ')"
     & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event Failed -ExitCode '1' -LogFile $resultFile -Detail $detail -Stats $statsJson
     Write-Host "PIPELINE_RESULT: PARTIAL_FAILURE ($VaultName)"
     exit 1
-} elseif ($softFailed.Count -gt 0) {
-    $detail = "Non-critical stage(s) had an issue (real content work still succeeded): $($softFailed -join ', ')"
-    & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event PartialSuccess -LogFile $resultFile -Detail $detail -Stats $statsJson
-    Write-Host "PIPELINE_RESULT: PARTIAL_SUCCESS ($VaultName)"
-    exit 0
-} elseif ($qaRowsChanged -gt 0) {
-    & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event Success -LogFile $resultFile -Stats $statsJson
-    Write-Host "PIPELINE_RESULT: SUCCESS ($VaultName)"
-    exit 0
-} else {
-    & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event NoChange -LogFile $resultFile -Stats $statsJson
-    Write-Host "PIPELINE_RESULT: NO_CHANGE ($VaultName)"
-    exit 0
 }
+
+# Final reason code: precedence order approved in Stage 1. First match wins.
+$precedenceOrder = @('INGEST_BLOCKED', 'INGEST_FAILURE_CEILING', 'INGEST_ERROR', 'SYNTHESIS_TIMEOUT', 'SYNTHESIS_ERROR', 'SYNTHESIS_LIMIT_HIT')
+$finalReasonCode = $null
+foreach ($code in $precedenceOrder) {
+    if ($ingestReasonCode -eq $code -or $synthReasonCode -eq $code) { $finalReasonCode = $code; break }
+}
+if (-not $finalReasonCode) {
+    # Nothing from the "problem" tier fired - fall through to ingestion's own informational
+    # code (TARGET_MET/NO_NEW_VIDEOS/CHANNEL_EXHAUSTED_SHORT/BACKLOG_PRIORITY_SKIP).
+    # Known, flagged gap (Stage 1): a vault with no channel_url, or a run invoked with
+    # -SkipYoutube, produces no ingestion reason code at all and none of the 9 codes
+    # accurately describes that case - left as $null rather than forcing an inaccurate
+    # code; send-notification.ps1 renders "N/A" for a null reason code (see that file).
+    $finalReasonCode = $ingestReasonCode
+}
+
+# Real total channel size is the percentage denominator (confirmed with T - catalogue,
+# not the reviewed subset). Guard against catalogueCount = 0 (e.g. BACKLOG_PRIORITY_SKIP's
+# scan-only call itself failed and returned -1, or a channel-less edge case) to avoid a
+# divide-by-zero; percentages render as "N/A" in that case, not a misleading 0%/blank.
+function Format-Pct($numerator, $denominator) {
+    if ($denominator -le 0) { return 'N/A' }
+    return "{0:N1}%" -f (100.0 * $numerator / $denominator)
+}
+
+$telegramStats = [ordered]@{
+    targetThisRun      = $synthTargetThisRun
+    actualSynthesized  = $synthActualSynthesized
+    backlog            = $manifestBacklog
+    catalogueCount     = $catalogueCount
+    pctReviewed        = Format-Pct $manifestTotal $catalogueCount
+    pctCurated         = Format-Pct $manifestIncluded $catalogueCount
+    pctRetryBlocked    = Format-Pct $manifestFailedBlocked $catalogueCount
+    pctRetryAwaiting   = Format-Pct $manifestMissingTranscript $catalogueCount
+    pctRetryOther      = Format-Pct $manifestFailedOther $catalogueCount
+    pctParkedFailed    = Format-Pct $manifestParked $catalogueCount
+}
+$telegramStatsJson = $telegramStats | ConvertTo-Json -Compress
+
+if ($softFailed.Count -gt 0) {
+    $telegramStats['softIssue'] = "Non-critical stage(s) had an issue: $($softFailed -join ', ')"
+    $telegramStatsJson = $telegramStats | ConvertTo-Json -Compress
+}
+
+$ingestErrorNote = if ($finalReasonCode -eq 'INGEST_BLOCKED' -or $finalReasonCode -eq 'INGEST_ERROR') {
+    "Affected rows this run: newIngested=$($ingestResult.newIngested) retried=$($ingestResult.retried). See ingest-errors.log (now covers both failed and failed_blocked rows)."
+} else { '' }
+$synthErrorNote = if ($finalReasonCode -eq 'SYNTHESIS_ERROR' -and $synthErrorSnippet) { "Error: $synthErrorSnippet" } else { '' }
+$runSummaryDetail = @($ingestErrorNote, $synthErrorNote) -join ' '
+
+& (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event RunSummary `
+    -LogFile $resultFile -Detail $runSummaryDetail.Trim() -ReasonCode $finalReasonCode -Stats $telegramStatsJson
+Write-Host "PIPELINE_RESULT: $finalReasonCode ($VaultName)"
+exit 0

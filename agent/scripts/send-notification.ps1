@@ -1,9 +1,11 @@
 <#
 .SYNOPSIS
-Sends a Telegram notification for one of four events, matching the proven pattern
+Sends a Telegram notification for one of six events, matching the proven pattern
 from run_nate_herk_weekly.sh: a run that couldn't start (lock contention), a run that
-failed mid-pipeline, a run that completed with real synthesis work done, or a run that
-completed with nothing to do.
+failed mid-pipeline outside the reason-coded stages, a run that completed with real
+synthesis work done, a run that completed with nothing to do, a run whose non-critical
+stage had an issue, or (new) a full-pipeline run summary carrying one of the nine
+ingestion/synthesis reason codes plus the backlog-aware stats block.
 
 .DESCRIPTION
 Credentials: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Resolved in this order:
@@ -20,11 +22,12 @@ Never throws — a notification failure must never fail the pipeline run itself.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VaultRoot,
-    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess')][string]$Event,
+    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess', 'RunSummary')][string]$Event,
     [string]$ExitCode,
     [string]$LogFile,
     [string]$Stats,
-    [string]$Detail
+    [string]$Detail,
+    [string]$ReasonCode
 )
 
 $ErrorActionPreference = 'Continue'
@@ -70,11 +73,39 @@ $message = switch ($Event) {
     'NoChange' {
         "Wiki pipeline ran for ${vaultName} - nothing to do, no changes made. Time: $now. Log: $LogFile. Stats: $Stats"
     }
+    'RunSummary' {
+        $s = $null
+        try { $s = $Stats | ConvertFrom-Json } catch { }
+        $reasonText = if ($ReasonCode) { $ReasonCode } else { 'N/A' }
+        $lines = @(
+            "Wiki pipeline run summary for ${vaultName}. Time: $now.",
+            "Reason: $reasonText",
+            "Target this run: $($s.targetThisRun) synthesised",
+            "Actual synthesised: $($s.actualSynthesized)",
+            "Backlog (downloaded, not yet synthesised): $($s.backlog)",
+            "Channel catalogue: $($s.catalogueCount) total",
+            "% channel reviewed: $($s.pctReviewed)",
+            "% curated: $($s.pctCurated)",
+            "% retry - blocked: $($s.pctRetryBlocked)",
+            "% retry - awaiting captions: $($s.pctRetryAwaiting)",
+            "% retry - other: $($s.pctRetryOther)",
+            "% parked/failed: $($s.pctParkedFailed)",
+            "Log: $LogFile"
+        )
+        if ($Detail) { $lines += "Detail: $Detail" }
+        if ($s -and $s.softIssue) { $lines += "Note: $($s.softIssue)" }
+        $lines -join "`n"
+    }
 }
 
 try {
     $uri = "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/sendMessage"
     Invoke-RestMethod -Uri $uri -Method Post -Body @{ chat_id = $env:TELEGRAM_CHAT_ID; text = $message } | Out-Null
+    # Previously silent on success, which made a genuine send indistinguishable in the
+    # dispatch log from this script never having been reached at all - real ambiguity
+    # found investigating a continuity=true run whose delivery couldn't be confirmed
+    # from the log alone. Logging the real HTTP result, not just "we tried."
+    Write-Host "Telegram notification sent (Event=$Event) for ${vaultName}."
 } catch {
     Write-Warning "Notification send failed (non-fatal): $($_.Exception.Message)"
 }

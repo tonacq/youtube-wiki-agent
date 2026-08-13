@@ -7,4 +7,5 @@ agent/scheduling/schedule.csv
 
 # Session-local operational artifacts
 agent/scheduling/dispatch-logs/
+**/working/temp/ingest-errors.log
 conformance-report*.json
