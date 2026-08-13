@@ -378,6 +378,15 @@ can see what actually happened without digging into logs.
 
 ## Quick start
 
+By default, this system expects to be deployed as a folder named exactly `WikiAgent`.
+It can, however, be renamed and located anywhere, and can run as any Linux user —
+running `install.sh` (see repo root) handles both automatically. Run it once after
+initial deployment, and again any time the folder is later moved, renamed, or its
+ownership changes: it detects and re-applies whatever is currently true each time it
+runs, but has no way to notice a move on its own — if the deployment is relocated
+without re-running it, the scheduled timer keeps pointing at the old, now-incorrect
+location and silently stops firing.
+
 ```bash
 # 1. Deploy this whole WikiAgent/ folder to the target host (e.g. /home/ubuntu/WikiAgent)
 # 2. Copy the template for a new vault:
