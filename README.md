@@ -408,7 +408,6 @@ if you leave it at its template default:
 | `vault_name` | Human-readable vault identifier | Template ships `"REPLACE_ME"` — must be set |
 | `channel_url` | YouTube channel this vault ingests from | Blank = YouTube ingestion silently skipped entirely |
 | `creator` / `creator_page` | Attribution metadata for the source creator | Cosmetic only — doesn't affect pipeline behavior |
-| `max_videos` | Cap on how many channel videos are scanned per run | Defaults to 80 if unset in code, but set it explicitly to match your real channel size |
 | `caption_languages` | Preferred caption language(s), in priority order | Defaults to `["en-orig", "en"]` |
 | `yt_dlp_path` | Path to the `yt-dlp` binary | Defaults to `yt-dlp` (must resolve on PATH) |
 | `proxy` | SOCKS5 proxy URL passed to `yt-dlp --proxy` | Blank = no proxy used; required if your host's IP is blocked by YouTube |
@@ -419,6 +418,11 @@ if you leave it at its template default:
 | `claude_effort` | Target synthesis effort passed to the LLM | Vault-defined string, no pipeline-level default enforcement |
 | `claude_budget_usd` | Soft per-run budget ceiling | **Currently unenforced regardless of value** — see "Claude Code / Claude API authentication" |
 | `max_transcript_attempts` | Retry cap before a caption-failing video is permanently parked | Defaults to `3` if unset |
+| `batch_size` | Number of pending source rows synthesized per Claude Code batch call, and how many new videos each ingestion walk targets per iteration | **Required — no code-level default.** `ingest-youtube.ps1` and `run-claude-synthesis.ps1` both throw on startup if unset or `0` |
+| `batch_iterations` | Max number of `batch_size`-sized batches attempted per run (ingestion target = `batch_size * batch_iterations` minus the existing synthesis backlog; synthesis loops up to this many real Claude Code calls) | **Required — no code-level default.** Same throw behavior as `batch_size` |
+| `ingest_failure_ceiling` | Consecutive ingestion failures (any type — `failed`, `failed_blocked`, `missing_transcript`, newly-`parked`) that stop a walk early, independent of whether the ingestion target was reached | Defaults to `12` if unset |
+| `continuity` | Whether a detected Claude Code session/usage limit during synthesis sleeps in-process and resumes the same run, vs. stopping cleanly and reporting it | Defaults to `false` if unset (stop cleanly, no sleep — see `INGEST_FAILURE_CEILING`/`SYNTHESIS_LIMIT_HIT` reason codes) |
+| `claude_call_timeout_seconds` | Wall-clock timeout per individual Claude Code batch call, enforced via `Start-Job`/`Wait-Job` | Defaults to `1800` (30 minutes) if unset |
 | `documents.enabled` / `documents.supported_extensions` | Controls manual document ingestion from `input/` | See `agent/docs/README.md`'s "Document ingestion" section before relying on this |
 | `backup.enabled` | Whether `backup-vault.ps1` runs at all | `true` in template; set `false` to disable |
 | `backup.remote` / `backup.destination` | Where backups get pushed on Drive | Blank destination now auto-derives to `<drive_path>/working/backups` |
