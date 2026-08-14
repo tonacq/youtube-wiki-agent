@@ -25,7 +25,9 @@ vault-specific values are hard-coded here.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VaultRoot,
-    [switch]$ReportOnly
+    [switch]$ReportOnly,
+    [string]$BatchSizeOverride = '',
+    [string]$BatchIterationsOverride = ''
 )
 
 Set-StrictMode -Version Latest
@@ -74,10 +76,30 @@ foreach ($row in $manifest) { $knownIds[$row.video_id] = $row }
 
 # Backlog-aware target, computed once, before any scan - see .DESCRIPTION above.
 $carryover = @($manifest | Where-Object { $_.ingest_status -eq 'ingested' -and $_.synthesis_status -eq 'pending' }).Count
-if (-not $config.PSObject.Properties['batch_size'] -or -not $config.batch_size) { throw "batch_size is required in config/vault.json (no silent default - this is a deliberately-tuned per-vault value)" }
-if (-not $config.PSObject.Properties['batch_iterations'] -or -not $config.batch_iterations) { throw "batch_iterations is required in config/vault.json (no silent default - this is a deliberately-tuned per-vault value)" }
-$batchSize = [int]$config.batch_size
-$batchIterations = [int]$config.batch_iterations
+
+# Resolution order: schedule.csv row override (per-run, optional) wins over config/vault.json
+# (per-vault default). If genuinely absent from BOTH, this is still a hard throw - no silent
+# default - since these remain deliberately-tuned values, not something safe to guess.
+$batchSizeSource = 'vault.json'
+if ($BatchSizeOverride.Trim() -ne '') {
+    $batchSize = [int]$BatchSizeOverride
+    $batchSizeSource = 'schedule.csv'
+} elseif ($config.PSObject.Properties['batch_size'] -and $config.batch_size) {
+    $batchSize = [int]$config.batch_size
+} else {
+    throw "batch_size is required in schedule.csv override or config/vault.json (no silent default - this is a deliberately-tuned per-vault value)"
+}
+
+$batchIterationsSource = 'vault.json'
+if ($BatchIterationsOverride.Trim() -ne '') {
+    $batchIterations = [int]$BatchIterationsOverride
+    $batchIterationsSource = 'schedule.csv'
+} elseif ($config.PSObject.Properties['batch_iterations'] -and $config.batch_iterations) {
+    $batchIterations = [int]$config.batch_iterations
+} else {
+    throw "batch_iterations is required in schedule.csv override or config/vault.json (no silent default - this is a deliberately-tuned per-vault value)"
+}
+
 $ingestionTarget = [Math]::Max(0, ($batchSize * $batchIterations) - $carryover)
 
 # Circuit breaker: real incident today - a walk with no bound on consecutive failures
@@ -108,6 +130,10 @@ function Write-IngestResult {
         carryover                 = $carryover
         ingestionTarget           = $ingestionTarget
         requestedTarget           = ($batchSize * $batchIterations)
+        batchSize                 = $batchSize
+        batchSizeSource           = $batchSizeSource
+        batchIterations           = $batchIterations
+        batchIterationsSource     = $batchIterationsSource
         newIngested               = $NewIngested
         retried                   = $Retried
         parkedThisRun             = $ParkedThisRun

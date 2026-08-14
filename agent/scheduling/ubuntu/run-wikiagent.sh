@@ -28,7 +28,12 @@ if [ ! -f "${SCHEDULE_CSV}" ]; then
 fi
 
 # Skip header, match day + hour on enabled=true rows, ignore _template.
-tail -n +2 "${SCHEDULE_CSV}" | while IFS=, read -r vault_name job_type day_of_week time_utc enabled; do
+# batch_size/batch_iterations/continuity are OPTIONAL per-run overrides (new columns,
+# appended at the end so any pre-existing 5-column row still reads correctly - IFS=,
+# read leaves trailing unmatched variables as empty strings, which is exactly the
+# blank-tolerant behavior needed here). Row value wins over vault.json's default only
+# when non-blank; run-vault.ps1 and downstream own the actual resolution rule.
+tail -n +2 "${SCHEDULE_CSV}" | while IFS=, read -r vault_name job_type day_of_week time_utc enabled batch_size_override batch_iterations_override continuity_override; do
   [ "${enabled}" = "true" ] || continue
   [ "${vault_name}" = "_template" ] && continue
   [ "${day_of_week}" = "${CURRENT_DAY}" ] || continue
@@ -44,8 +49,15 @@ tail -n +2 "${SCHEDULE_CSV}" | while IFS=, read -r vault_name job_type day_of_we
 
   logfile="${LOG_DIR}/${vault_name}_${job_type}_$(date -u +%Y%m%dT%H%M%SZ).log"
   echo "Dispatching vault=${vault_name} job_type=${job_type} -> ${logfile}"
+
+  extra_args=()
+  [ -n "${batch_size_override}" ] && extra_args+=(-BatchSizeOverride "${batch_size_override}")
+  [ -n "${batch_iterations_override}" ] && extra_args+=(-BatchIterationsOverride "${batch_iterations_override}")
+  [ -n "${continuity_override}" ] && extra_args+=(-ContinuityOverride "${continuity_override}")
+
   pwsh -NoProfile -File "${AGENT_ROOT}/scripts/run-vault.ps1" \
     -VaultRoot "${vault_path}" \
     -JobType "${job_type}" \
+    "${extra_args[@]}" \
     >"${logfile}" 2>&1 || echo "Vault ${vault_name} run exited non-zero; see ${logfile}" >&2
 done

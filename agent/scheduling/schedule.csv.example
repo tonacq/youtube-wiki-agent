@@ -1,3 +1,4 @@
-vault_name,job_type,day_of_week,time_utc,enabled
-example_channel_full,full,Sat,17:00,false
-example_channel_lint,lint-review,Sat,20:00,false
+vault_name,job_type,day_of_week,time_utc,enabled,batch_size,batch_iterations,continuity
+example_channel_full,full,Sat,17:00,false,,,
+example_channel_overnight,full,Sun,03:00,false,10,3,true
+example_channel_lint,lint-review,Sat,20:00,false,,,

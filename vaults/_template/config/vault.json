@@ -4,7 +4,10 @@
   "creator": "",
   "creator_page": "",
   "max_transcript_attempts": 3,
-  "caption_languages": ["en-orig", "en"],
+  "caption_languages": [
+    "en-orig",
+    "en"
+  ],
   "yt_dlp_path": "yt-dlp",
   "proxy": "",
   "cookie_file": "",
@@ -20,7 +23,12 @@
   "claude_budget_usd": 10,
   "documents": {
     "enabled": true,
-    "supported_extensions": [".pdf", ".docx", ".md", ".txt"]
+    "supported_extensions": [
+      ".pdf",
+      ".docx",
+      ".md",
+      ".txt"
+    ]
   },
   "backup": {
     "enabled": true,

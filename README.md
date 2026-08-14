@@ -437,6 +437,30 @@ if you leave it at its template default:
 | `backup.remote` / `backup.destination` | Where backups get pushed on Drive | Blank destination now auto-derives to `<drive_path>/working/backups` |
 | `backup.keep` | Local *and* Drive backup retention count | Defaults to `12`; enforced on both sides as of this release |
 
+### Optional per-run overrides (`schedule.csv`)
+
+`batch_size`, `batch_iterations`, and `continuity` can also be set per-row in
+`schedule.csv`, as three optional trailing columns:
+
+```
+vault_name,job_type,day_of_week,time_utc,enabled,batch_size,batch_iterations,continuity
+MyNewVault,full,Sun,09:00,true,,,
+MyNewVault,full,Wed,03:00,true,10,3,true
+```
+
+Resolution order per run: the `schedule.csv` row value wins if non-blank; otherwise the
+vault's `config/vault.json` value is used; if genuinely absent from **both**,
+`batch_size`/`batch_iterations` still hard-throw (no silent default — see the table
+above), and `continuity` still falls back to `false`. Leave all three columns blank on a
+row (as in the first example row above) to keep existing vault.json-only behavior
+completely unchanged — this is fully backward compatible with 5-column `schedule.csv`
+rows written before this feature existed. Use this to let one vault run with different
+batch settings on different scheduled rows (e.g. a small `full` run on weekdays, a
+larger overnight `continuity=true` run on weekends) without maintaining multiple
+`vault.json` files. The resolved values and their source (`schedule.csv` or
+`vault.json`) are reported back in each run's Telegram `RunSummary`, on the "Batch
+config" line.
+
 ## Obsidian — how to actually read the output
 
 This pipeline's terminology (`vault`, `wiki/concepts/`, `wiki/tools/`,

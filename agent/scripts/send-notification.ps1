@@ -90,10 +90,11 @@ $message = switch ($Event) {
             "% retry - awaiting captions: $($s.pctRetryAwaiting)",
             "% retry - other: $($s.pctRetryOther)",
             "% parked/failed: $($s.pctParkedFailed)",
+            "Batch config: size=$($s.batchSize), iterations=$($s.batchIterations), continuity=$($s.continuity)",
             "Log: $LogFile"
         )
         if ($Detail) { $lines += "Detail: $Detail" }
-        if ($s -and $s.softIssue) { $lines += "Note: $($s.softIssue)" }
+        if ($s -and $s.PSObject.Properties['softIssue'] -and $s.softIssue) { $lines += "Note: $($s.softIssue)" }
         $lines -join "`n"
     }
 }

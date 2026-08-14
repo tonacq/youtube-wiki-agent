@@ -33,7 +33,16 @@ param(
     [switch]$SkipClean,
     [switch]$SkipDocuments,
     [switch]$SkipClaude,
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    # Optional per-run overrides, normally sourced from schedule.csv's optional
+    # batch_size/batch_iterations/continuity columns (blank = no override, dispatcher
+    # never passes these switches at all in that case). String, not int/bool, since
+    # they arrive as raw CSV cell text via the bash dispatcher; ingest-youtube.ps1 and
+    # run-claude-synthesis.ps1 own the actual override-vs-vault.json resolution rule
+    # and type parsing - this script only threads them through unchanged.
+    [string]$BatchSizeOverride = '',
+    [string]$BatchIterationsOverride = '',
+    [string]$ContinuityOverride = ''
 )
 
 Set-StrictMode -Version Latest
@@ -139,13 +148,22 @@ try {
             Write-Host "lint-review for ${VaultName}: today ($($today.ToString('ddd yyyy-MM-dd'))) is NOT the last $($today.DayOfWeek) of $($today.ToString('MMMM')) (that's the $($lastOccurrenceDate.Day)) - skipping until then."
         }
     } else {
-        if (-not $SkipYoutube)   { Invoke-Stage 'ingest-youtube'       (Join-Path $AgentRoot 'scripts/ingest-youtube.ps1')       @() }
+        # Only pass an override switch through when the row/caller actually supplied one -
+        # an empty hashtable splats to zero extra parameters, so a run with no overrides
+        # behaves identically to before this change.
+        $batchOverrideArgs = @{}
+        if ($BatchSizeOverride.Trim() -ne '') { $batchOverrideArgs['BatchSizeOverride'] = $BatchSizeOverride }
+        if ($BatchIterationsOverride.Trim() -ne '') { $batchOverrideArgs['BatchIterationsOverride'] = $BatchIterationsOverride }
+        $synthOverrideArgs = $batchOverrideArgs.Clone()
+        if ($ContinuityOverride.Trim() -ne '') { $synthOverrideArgs['ContinuityOverride'] = $ContinuityOverride }
+
+        if (-not $SkipYoutube)   { Invoke-Stage 'ingest-youtube'       (Join-Path $AgentRoot 'scripts/ingest-youtube.ps1')       $batchOverrideArgs }
         if (-not $SkipClean)     { Invoke-Stage 'clean-transcripts'    (Join-Path $AgentRoot 'scripts/clean-transcripts.ps1')    @() }
         if (-not $SkipDocuments) { Invoke-Stage 'ingest-documents'     (Join-Path $AgentRoot 'scripts/ingest-documents.ps1')     @() }
         Invoke-Stage 'create-source-pages' (Join-Path $AgentRoot 'scripts/create-source-pages.ps1') @()
 
         if (-not $SkipClaude -and -not $ReportOnly) {
-            Invoke-Stage 'run-claude-synthesis' (Join-Path $AgentRoot 'scripts/run-claude-synthesis.ps1') @()
+            Invoke-Stage 'run-claude-synthesis' (Join-Path $AgentRoot 'scripts/run-claude-synthesis.ps1') $synthOverrideArgs
         }
 
         # QA always runs, even if an earlier stage failed or Claude was interrupted.
@@ -200,6 +218,14 @@ $ingestResultPath = Join-Path $VaultRoot 'working/temp/ingest-result.json'
 $ingestResult = [ordered]@{ scanned = 0; newIngested = 0; retried = 0; parkedThisRun = 0; skippedAlreadyParked = 0 }
 $ingestReasonCode = $null
 $catalogueCount = 0
+# Resolved batch_size/batch_iterations + which source won (schedule.csv override vs
+# vault.json) - captured from whichever stage actually ran and wrote a result file, so the
+# RunSummary can show T what was actually used this run without them having to cross-check
+# schedule.csv against vault.json by hand.
+$resolvedBatchSize = $null
+$resolvedBatchSizeSource = $null
+$resolvedBatchIterations = $null
+$resolvedBatchIterationsSource = $null
 if (Test-Path -LiteralPath $ingestResultPath) {
     try {
         $parsed = Get-Content -LiteralPath $ingestResultPath -Raw | ConvertFrom-Json
@@ -208,6 +234,10 @@ if (Test-Path -LiteralPath $ingestResultPath) {
         }
         if ($parsed.PSObject.Properties['reasonCode']) { $ingestReasonCode = [string]$parsed.reasonCode }
         if ($parsed.PSObject.Properties['catalogueCount']) { $catalogueCount = [int]$parsed.catalogueCount }
+        if ($parsed.PSObject.Properties['batchSize']) { $resolvedBatchSize = [int]$parsed.batchSize }
+        if ($parsed.PSObject.Properties['batchSizeSource']) { $resolvedBatchSizeSource = [string]$parsed.batchSizeSource }
+        if ($parsed.PSObject.Properties['batchIterations']) { $resolvedBatchIterations = [int]$parsed.batchIterations }
+        if ($parsed.PSObject.Properties['batchIterationsSource']) { $resolvedBatchIterationsSource = [string]$parsed.batchIterationsSource }
     } catch {
         Write-Warning "Could not parse ingest-result.json for stats: $($_.Exception.Message)"
     }
@@ -220,6 +250,8 @@ $synthReasonCode = $null
 $synthActualSynthesized = 0
 $synthTargetThisRun = 0
 $synthErrorSnippet = ''
+$resolvedContinuity = $null
+$resolvedContinuitySource = $null
 if (Test-Path -LiteralPath $synthResultPath) {
     try {
         $parsedSynth = Get-Content -LiteralPath $synthResultPath -Raw | ConvertFrom-Json
@@ -227,6 +259,15 @@ if (Test-Path -LiteralPath $synthResultPath) {
         if ($parsedSynth.PSObject.Properties['actualSynthesized']) { $synthActualSynthesized = [int]$parsedSynth.actualSynthesized }
         if ($parsedSynth.PSObject.Properties['targetThisRun']) { $synthTargetThisRun = [int]$parsedSynth.targetThisRun }
         if ($parsedSynth.PSObject.Properties['errorSnippet']) { $synthErrorSnippet = [string]$parsedSynth.errorSnippet }
+        # run-claude-synthesis.ps1 runs after ingest-youtube.ps1 and resolves the same
+        # override rule independently - its values win here as the more authoritative,
+        # later read, and it is the only stage that resolves continuity at all.
+        if ($parsedSynth.PSObject.Properties['batchSize']) { $resolvedBatchSize = [int]$parsedSynth.batchSize }
+        if ($parsedSynth.PSObject.Properties['batchSizeSource']) { $resolvedBatchSizeSource = [string]$parsedSynth.batchSizeSource }
+        if ($parsedSynth.PSObject.Properties['batchIterations']) { $resolvedBatchIterations = [int]$parsedSynth.batchIterations }
+        if ($parsedSynth.PSObject.Properties['batchIterationsSource']) { $resolvedBatchIterationsSource = [string]$parsedSynth.batchIterationsSource }
+        if ($parsedSynth.PSObject.Properties['continuity']) { $resolvedContinuity = [bool]$parsedSynth.continuity }
+        if ($parsedSynth.PSObject.Properties['continuitySource']) { $resolvedContinuitySource = [string]$parsedSynth.continuitySource }
     } catch {
         Write-Warning "Could not parse synthesis-run-result.json for stats: $($_.Exception.Message)"
     }
@@ -351,6 +392,15 @@ function Format-Pct($numerator, $denominator) {
     return "{0:N1}%" -f (100.0 * $numerator / $denominator)
 }
 
+# Human-readable summary of what batch_size/batch_iterations/continuity actually resolved
+# to this run, and whether each came from a schedule.csv override or fell back to
+# vault.json - null (stage never ran, e.g. -SkipYoutube and -SkipClaude both set) renders
+# as "N/A" rather than a misleading blank.
+function Format-ResolvedField($value, $source) {
+    if ($null -eq $value) { return 'N/A' }
+    return "$value ($source)"
+}
+
 $telegramStats = [ordered]@{
     targetThisRun      = $synthTargetThisRun
     actualSynthesized  = $synthActualSynthesized
@@ -362,6 +412,9 @@ $telegramStats = [ordered]@{
     pctRetryAwaiting   = Format-Pct $manifestMissingTranscript $catalogueCount
     pctRetryOther      = Format-Pct $manifestFailedOther $catalogueCount
     pctParkedFailed    = Format-Pct $manifestParked $catalogueCount
+    batchSize          = Format-ResolvedField $resolvedBatchSize $resolvedBatchSizeSource
+    batchIterations    = Format-ResolvedField $resolvedBatchIterations $resolvedBatchIterationsSource
+    continuity         = Format-ResolvedField $resolvedContinuity $resolvedContinuitySource
 }
 $telegramStatsJson = $telegramStats | ConvertTo-Json -Compress
 

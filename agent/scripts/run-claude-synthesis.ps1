@@ -30,7 +30,10 @@ generated at the start of that batch's iteration.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VaultRoot,
-    [switch]$LintReview
+    [switch]$LintReview,
+    [string]$BatchSizeOverride = '',
+    [string]$BatchIterationsOverride = '',
+    [string]$ContinuityOverride = ''
 )
 
 Set-StrictMode -Version Latest
@@ -68,17 +71,43 @@ make no other changes.
 
 $manifestPath = Join-Path $VaultRoot 'working/manifest.csv'
 
-if (-not $config.PSObject.Properties['batch_size'] -or -not $config.batch_size) { throw "batch_size is required in config/vault.json (no silent default)" }
-if (-not $config.PSObject.Properties['batch_iterations'] -or -not $config.batch_iterations) { throw "batch_iterations is required in config/vault.json (no silent default)" }
-$batchSize = [int]$config.batch_size
-$batchIterations = [int]$config.batch_iterations
+# Resolution order: schedule.csv row override (per-run, optional) wins over config/vault.json
+# (per-vault default). If genuinely absent from BOTH, batch_size/batch_iterations remain a
+# hard throw - no silent default - since these are deliberately-tuned values, not something
+# safe to guess.
+$batchSizeSource = 'vault.json'
+if ($BatchSizeOverride.Trim() -ne '') {
+    $batchSize = [int]$BatchSizeOverride
+    $batchSizeSource = 'schedule.csv'
+} elseif ($config.PSObject.Properties['batch_size'] -and $config.batch_size) {
+    $batchSize = [int]$config.batch_size
+} else {
+    throw "batch_size is required in schedule.csv override or config/vault.json (no silent default)"
+}
+
+$batchIterationsSource = 'vault.json'
+if ($BatchIterationsOverride.Trim() -ne '') {
+    $batchIterations = [int]$BatchIterationsOverride
+    $batchIterationsSource = 'schedule.csv'
+} elseif ($config.PSObject.Properties['batch_iterations'] -and $config.batch_iterations) {
+    $batchIterations = [int]$config.batch_iterations
+} else {
+    throw "batch_iterations is required in schedule.csv override or config/vault.json (no silent default)"
+}
+
 # Set-StrictMode -Version Latest throws PropertyNotFoundException on a genuinely-absent
 # JSON property (unlike a present-but-empty one) - confirmed the hard way in Stage 3
 # testing (continuity is legitimately absent from every real vault.json today, since it
 # defaults to false). Existence-checked via .PSObject.Properties first, matching the
 # pattern already used elsewhere in this codebase (e.g. ingest-youtube.ps1's
 # transcript_attempts backfill) rather than bare property access.
-$continuity = if ($config.PSObject.Properties['continuity'] -and $config.continuity) { [bool]$config.continuity } else { $false }
+$continuitySource = 'vault.json'
+if ($ContinuityOverride.Trim() -ne '') {
+    $continuity = [bool]::Parse($ContinuityOverride)
+    $continuitySource = 'schedule.csv'
+} else {
+    $continuity = if ($config.PSObject.Properties['continuity'] -and $config.continuity) { [bool]$config.continuity } else { $false }
+}
 $claudeTimeoutSeconds = if ($config.PSObject.Properties['claude_call_timeout_seconds'] -and $config.claude_call_timeout_seconds) { [int]$config.claude_call_timeout_seconds } else { 1800 }
 
 # Ported from the proven standalone predecessor's Get-ResetSleepSeconds (confirmed
@@ -124,14 +153,20 @@ function Write-SynthesisRunResult {
     )
     New-Item -ItemType Directory -Force -Path (Split-Path -Path $synthesisRunResultPath -Parent) | Out-Null
     [ordered]@{
-        reasonCode        = $ReasonCode
-        batchesCompleted  = $BatchesCompleted
-        batchesPlanned    = $batchIterations
-        targetThisRun     = ($batchSize * $batchIterations)
-        actualSynthesized = $actualSynthesized
-        errorSnippet      = $ErrorSnippet
-        sleptUntil        = $SleptUntil
-        timestamp         = (Get-Date).ToString('o')
+        reasonCode            = $ReasonCode
+        batchesCompleted      = $BatchesCompleted
+        batchesPlanned        = $batchIterations
+        targetThisRun         = ($batchSize * $batchIterations)
+        batchSize             = $batchSize
+        batchSizeSource       = $batchSizeSource
+        batchIterations       = $batchIterations
+        batchIterationsSource = $batchIterationsSource
+        continuity            = $continuity
+        continuitySource      = $continuitySource
+        actualSynthesized     = $actualSynthesized
+        errorSnippet          = $ErrorSnippet
+        sleptUntil            = $SleptUntil
+        timestamp             = (Get-Date).ToString('o')
     } | ConvertTo-Json | Out-File -LiteralPath $synthesisRunResultPath -Encoding utf8 -Force
 }
 
