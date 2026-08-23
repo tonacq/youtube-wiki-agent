@@ -250,6 +250,7 @@ $synthReasonCode = $null
 $synthActualSynthesized = 0
 $synthTargetThisRun = 0
 $synthErrorSnippet = ''
+$synthDroppedSources = @()
 $resolvedContinuity = $null
 $resolvedContinuitySource = $null
 if (Test-Path -LiteralPath $synthResultPath) {
@@ -259,6 +260,11 @@ if (Test-Path -LiteralPath $synthResultPath) {
         if ($parsedSynth.PSObject.Properties['actualSynthesized']) { $synthActualSynthesized = [int]$parsedSynth.actualSynthesized }
         if ($parsedSynth.PSObject.Properties['targetThisRun']) { $synthTargetThisRun = [int]$parsedSynth.targetThisRun }
         if ($parsedSynth.PSObject.Properties['errorSnippet']) { $synthErrorSnippet = [string]$parsedSynth.errorSnippet }
+        # droppedSources: video_ids/titles this run's synthesis batches sent to Claude
+        # but that did not come back included (see run-claude-synthesis.ps1's
+        # SYNTHESIS_PARTIAL handling). Surfaced in the RunSummary notification so an
+        # operator sees exactly which sources need attention, not just a count.
+        if ($parsedSynth.PSObject.Properties['droppedSources']) { $synthDroppedSources = @($parsedSynth.droppedSources) }
         # run-claude-synthesis.ps1 runs after ingest-youtube.ps1 and resolves the same
         # override rule independently - its values win here as the more authoritative,
         # later read, and it is the only stage that resolves continuity at all.
@@ -296,7 +302,10 @@ if (Test-Path -LiteralPath $manifestPath) {
         # Backlog measured NOW (post-run), distinct from ingest-youtube.ps1's own
         # "carryover" figure, which is the same quantity measured BEFORE this run - used
         # only for this run's ingestion-target math, not for this stats snapshot.
-        $manifestBacklog = @($manifestRows | Where-Object { $_.ingest_status -eq 'ingested' -and $_.synthesis_status -eq 'pending' }).Count
+        # Includes 'partial' rows (attempted-but-incomplete) alongside 'pending' - both
+        # still represent real backlog work remaining, just at different stages of an
+        # attempt.
+        $manifestBacklog = @($manifestRows | Where-Object { $_.ingest_status -eq 'ingested' -and ($_.synthesis_status -eq 'pending' -or $_.synthesis_status -eq 'partial') }).Count
         # transcript_status ∈ {failed_blocked, failed, missing_transcript} implies
         # transcript_attempts < max (confirmed via code: reaching the cap always
         # overwrites status to 'parked') - no separate attempts filter needed here.
@@ -359,7 +368,7 @@ if ($JobType -eq 'lint-review') {
 # JobType = 'full' from here on.
 if ($criticalFailedOutsideReasonCoded.Count -gt 0) {
     # A stage outside ingestion/synthesis failed critically (e.g. backup-vault,
-    # create-source-pages) - not covered by any of the 9 reason codes; keep the existing
+    # create-source-pages) - not covered by any of the reason codes; keep the existing
     # Failed event for this, unchanged in shape from before this brief.
     $detail = "Critical stage(s) failed: $($criticalFailedOutsideReasonCoded -join ', ')"
     & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event Failed -ExitCode '1' -LogFile $resultFile -Detail $detail -Stats $statsJson
@@ -367,8 +376,15 @@ if ($criticalFailedOutsideReasonCoded.Count -gt 0) {
     exit 1
 }
 
-# Final reason code: precedence order approved in Stage 1. First match wins.
-$precedenceOrder = @('INGEST_BLOCKED', 'INGEST_FAILURE_CEILING', 'INGEST_ERROR', 'SYNTHESIS_TIMEOUT', 'SYNTHESIS_ERROR', 'SYNTHESIS_LIMIT_HIT')
+# Final reason code: precedence order approved in Stage 1, extended with
+# SYNTHESIS_PARTIAL (2026-08-24 SabrinaRamonov_Rev00 incident fix). SYNTHESIS_PARTIAL is
+# placed after the other synthesis-tier codes (TIMEOUT/ERROR/LIMIT_HIT keep their
+# existing relative priority - a harder stop is still reported ahead of a softer
+# "some sources dropped" signal when both somehow apply) but, like every other code in
+# this list, it is still checked entirely before the fallback-to-ingestion-code step
+# below - so it can never again be silently masked by an ingestion-stage code such as
+# TARGET_MET the way it was in the incident this fixes.
+$precedenceOrder = @('INGEST_BLOCKED', 'INGEST_FAILURE_CEILING', 'INGEST_ERROR', 'SYNTHESIS_TIMEOUT', 'SYNTHESIS_ERROR', 'SYNTHESIS_LIMIT_HIT', 'SYNTHESIS_PARTIAL')
 $finalReasonCode = $null
 foreach ($code in $precedenceOrder) {
     if ($ingestReasonCode -eq $code -or $synthReasonCode -eq $code) { $finalReasonCode = $code; break }
@@ -415,12 +431,13 @@ $telegramStats = [ordered]@{
     batchSize          = Format-ResolvedField $resolvedBatchSize $resolvedBatchSizeSource
     batchIterations    = Format-ResolvedField $resolvedBatchIterations $resolvedBatchIterationsSource
     continuity         = Format-ResolvedField $resolvedContinuity $resolvedContinuitySource
+    droppedSources     = $synthDroppedSources
 }
-$telegramStatsJson = $telegramStats | ConvertTo-Json -Compress
+$telegramStatsJson = $telegramStats | ConvertTo-Json -Compress -Depth 5
 
 if ($softFailed.Count -gt 0) {
     $telegramStats['softIssue'] = "Non-critical stage(s) had an issue: $($softFailed -join ', ')"
-    $telegramStatsJson = $telegramStats | ConvertTo-Json -Compress
+    $telegramStatsJson = $telegramStats | ConvertTo-Json -Compress -Depth 5
 }
 
 $ingestErrorNote = if ($finalReasonCode -eq 'INGEST_BLOCKED' -or $finalReasonCode -eq 'INGEST_ERROR') {

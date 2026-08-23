@@ -4,7 +4,7 @@ Sends a Telegram notification for one of six events, matching the proven pattern
 from run_nate_herk_weekly.sh: a run that couldn't start (lock contention), a run that
 failed mid-pipeline outside the reason-coded stages, a run that completed with real
 synthesis work done, a run that completed with nothing to do, a run whose non-critical
-stage had an issue, or (new) a full-pipeline run summary carrying one of the nine
+stage had an issue, or (new) a full-pipeline run summary carrying one of the
 ingestion/synthesis reason codes plus the backlog-aware stats block.
 
 .DESCRIPTION
@@ -77,6 +77,14 @@ $message = switch ($Event) {
         $s = $null
         try { $s = $Stats | ConvertFrom-Json } catch { }
         $reasonText = if ($ReasonCode) { $ReasonCode } else { 'N/A' }
+        # SYNTHESIS_PARTIAL gets a plain-language qualifier inline with the reason line
+        # itself, not just the bare code - added following the 2026-08-24
+        # SabrinaRamonov_Rev00 incident, where a bare "Reason: TARGET_MET" next to
+        # "Actual synthesised: 18" (of a "Target this run: 20") gave no indication
+        # anything had gone wrong.
+        if ($ReasonCode -eq 'SYNTHESIS_PARTIAL') {
+            $reasonText = "$ReasonCode (one or more synthesis batches returned fewer results than sources sent - some sources may need attention; see dropped sources below)"
+        }
         $lines = @(
             "Wiki pipeline run summary for ${vaultName}. Time: $now.",
             "Reason: $reasonText",
@@ -93,6 +101,12 @@ $message = switch ($Event) {
             "Batch config: size=$($s.batchSize), iterations=$($s.batchIterations), continuity=$($s.continuity)",
             "Log: $LogFile"
         )
+        # Dropped-source detail (video IDs and titles, not just a count) - only rendered
+        # when there is something to show, so a clean run's message is unchanged.
+        if ($s -and $s.PSObject.Properties['droppedSources'] -and $s.droppedSources -and @($s.droppedSources).Count -gt 0) {
+            $droppedList = @($s.droppedSources) | ForEach-Object { "$($_.videoId) ($($_.title))" }
+            $lines += "Dropped sources - sent to Claude, not included (count: $(@($s.droppedSources).Count)): $($droppedList -join '; ')"
+        }
         if ($Detail) { $lines += "Detail: $Detail" }
         if ($s -and $s.PSObject.Properties['softIssue'] -and $s.softIssue) { $lines += "Note: $($s.softIssue)" }
         $lines -join "`n"
