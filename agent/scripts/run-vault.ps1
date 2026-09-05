@@ -377,14 +377,25 @@ if ($criticalFailedOutsideReasonCoded.Count -gt 0) {
 }
 
 # Final reason code: precedence order approved in Stage 1, extended with
-# SYNTHESIS_PARTIAL (2026-08-24 SabrinaRamonov_Rev00 incident fix). SYNTHESIS_PARTIAL is
-# placed after the other synthesis-tier codes (TIMEOUT/ERROR/LIMIT_HIT keep their
-# existing relative priority - a harder stop is still reported ahead of a softer
-# "some sources dropped" signal when both somehow apply) but, like every other code in
-# this list, it is still checked entirely before the fallback-to-ingestion-code step
-# below - so it can never again be silently masked by an ingestion-stage code such as
-# TARGET_MET the way it was in the incident this fixes.
-$precedenceOrder = @('INGEST_BLOCKED', 'INGEST_FAILURE_CEILING', 'INGEST_ERROR', 'SYNTHESIS_TIMEOUT', 'SYNTHESIS_ERROR', 'SYNTHESIS_LIMIT_HIT', 'SYNTHESIS_PARTIAL')
+# SYNTHESIS_PARTIAL (2026-08-24 SabrinaRamonov_Rev00 incident fix) and, following the
+# 2026-09-05 SabrinaRamonov_Rev01 reliability investigation, with the more specific
+# codes run-claude-synthesis.ps1's zero-progress classification can now emit
+# (AUTH_REQUIRED, RUNNER_EXCEPTION, CLAUDE_EXIT_ERROR, SYNTHESIS_RESULT_MISSING,
+# SYNTHESIS_RESULT_INVALID, SYNTHESIS_RESULT_BATCH_MISMATCH, QA_ZERO_PROGRESS) - these
+# used to only ever surface as the generic SYNTHESIS_ERROR. Every code in this list is
+# additive: existing codes keep exactly their previous relative order (TIMEOUT before
+# ERROR before LIMIT_HIT before PARTIAL, unchanged), and every new code is still checked
+# entirely before the fallback-to-ingestion-code step below - so none of them can be
+# silently masked by an ingestion-stage code such as TARGET_MET the way SYNTHESIS_PARTIAL
+# was in the 2026-08-24 incident this same guard already fixes for.
+$precedenceOrder = @(
+    'INGEST_BLOCKED', 'INGEST_FAILURE_CEILING', 'INGEST_ERROR',
+    'AUTH_REQUIRED', 'RUNNER_EXCEPTION',
+    'SYNTHESIS_TIMEOUT',
+    'CLAUDE_EXIT_ERROR', 'SYNTHESIS_RESULT_MISSING', 'SYNTHESIS_RESULT_INVALID',
+    'SYNTHESIS_RESULT_BATCH_MISMATCH', 'QA_ZERO_PROGRESS', 'SYNTHESIS_ERROR',
+    'SYNTHESIS_LIMIT_HIT', 'SYNTHESIS_PARTIAL'
+)
 $finalReasonCode = $null
 foreach ($code in $precedenceOrder) {
     if ($ingestReasonCode -eq $code -or $synthReasonCode -eq $code) { $finalReasonCode = $code; break }

@@ -57,7 +57,22 @@ $templateArtefacts = 0
 $result = $null
 
 if (Test-Path -LiteralPath $resultFile) {
-    $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
+    # A malformed result file must not crash the whole reconciliation pass - the disk-truth
+    # fallback and frontmatter sync below are independent, unconditional safety nets that
+    # still need to run even when Claude's own result file is unusable (confirmed via a
+    # real 2026-09-05 SabrinaRamonov_Rev01 reliability investigation: without this guard, a
+    # malformed synthesis-result.json here previously propagated as an uncaught terminating
+    # error out of run-qa.ps1 entirely). Left in place, not archived (the `if ($result)`
+    # guard on the archive step below skips it), so it stays on disk for a human to inspect
+    # rather than silently disappearing.
+    try {
+        $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
+    } catch {
+        Write-Warning "synthesis-result.json present but failed to parse - left in place (not archived) for inspection: $($_.Exception.Message)"
+        $result = $null
+    }
+}
+if ($result) {
     $processedIds = @($result.processed)
 
     foreach ($row in $manifest) {
