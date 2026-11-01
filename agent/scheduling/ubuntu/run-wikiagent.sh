@@ -21,6 +21,25 @@ mkdir -p "${LOG_DIR}"
 
 CURRENT_DAY="$(date -u +%a)"     # Mon, Tue, ...
 CURRENT_HOUR="$(date -u +%H)"
+# Test-only overrides (never set in production): let a test pin the dispatcher's clock.
+CURRENT_DAY="${WIKIAGENT_TEST_NOW_DAY:-${CURRENT_DAY}}"
+CURRENT_HOUR="${WIKIAGENT_TEST_NOW_HOUR:-${CURRENT_HOUR}}"
+
+# Daily health check (agent/scripts/health-check.ps1): silent unless Claude Code is logged
+# out or its login cannot be confirmed; on HEARTBEAT_DAY_UTC it also sends a weekly
+# heartbeat. Defaults: 21:00 UTC, heartbeat on Sun (Mon 08:00 Sydney under daylight
+# saving, 07:00 otherwise). Override by setting these in wikiagent.service's environment.
+# Runs before, and independently of, the vault rows; a failure here never stops them.
+HEALTH_CHECK_HOUR_UTC="${WIKIAGENT_HEALTH_CHECK_HOUR_UTC:-21}"
+HEARTBEAT_DAY_UTC="${WIKIAGENT_HEARTBEAT_DAY_UTC:-Sun}"
+if [ "${CURRENT_HOUR}" = "${HEALTH_CHECK_HOUR_UTC}" ]; then
+  health_mode="Daily"
+  [ "${CURRENT_DAY}" = "${HEARTBEAT_DAY_UTC}" ] && health_mode="Weekly"
+  health_log="${LOG_DIR}/_health_${health_mode}_$(date -u +%Y%m%dT%H%M%SZ).log"
+  echo "Running health check mode=${health_mode} -> ${health_log}"
+  pwsh -NoProfile -File "${AGENT_ROOT}/scripts/health-check.ps1" -Mode "${health_mode}" \
+    >"${health_log}" 2>&1 || echo "Health check exited non-zero; see ${health_log}" >&2
+fi
 
 if [ ! -f "${SCHEDULE_CSV}" ]; then
   echo "No schedule.csv found at ${SCHEDULE_CSV}; nothing to do." >&2

@@ -279,6 +279,29 @@ if (Test-Path -LiteralPath $synthResultPath) {
     }
 }
 
+# Urgent, separate alert when synthesis could not run because Claude Code is logged out.
+# The RunSummary below still reports AUTH_REQUIRED as its reason, but as one line in a
+# routine message; on its own that went unnoticed for about four weeks (Oct 2026). Sent
+# here, before any branch below can exit, so it fires even if another stage also failed.
+# synthesis-run-result.json is rewritten by every run that reaches synthesis; a stale
+# AUTH_REQUIRED from an earlier run is excluded by requiring the file's own timestamp to
+# fall inside this run.
+if ($JobType -eq 'full' -and $synthReasonCode -eq 'AUTH_REQUIRED') {
+    $synthResultIsThisRun = $false
+    try {
+        # ConvertFrom-Json may already have turned the ISO string into a [datetime].
+        $rawTimestamp = $parsedSynth.timestamp
+        $synthTimestamp = if ($rawTimestamp -is [datetime]) { $rawTimestamp } else { [datetime]::Parse([string]$rawTimestamp, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+        $synthResultIsThisRun = ($synthTimestamp.ToUniversalTime() -ge $runStart.ToUniversalTime())
+    } catch {
+        Write-Warning "Could not read synthesis-run-result.json timestamp for the auth alert: $($_.Exception.Message)"
+    }
+    if ($synthResultIsThisRun) {
+        $authAlertDetail = "Claude Code is logged out on the VM, so synthesis for $VaultName did not run. Ingestion and Drive backup still ran. Fix: on the VM run 'claude auth login', then confirm with 'claude auth status --json'."
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event AuthAlert -Detail $authAlertDetail
+    }
+}
+
 # Manifest snapshot: totals across the vault as it stands at the end of this run, so
 # notifications carry real counts rather than just this-run deltas.
 $manifestPath = Join-Path $VaultRoot 'working/manifest.csv'

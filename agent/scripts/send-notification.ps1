@@ -1,11 +1,20 @@
 <#
 .SYNOPSIS
-Sends a Telegram notification for one of six events, matching the proven pattern
-from run_nate_herk_weekly.sh: a run that couldn't start (lock contention), a run that
-failed mid-pipeline outside the reason-coded stages, a run that completed with real
-synthesis work done, a run that completed with nothing to do, a run whose non-critical
-stage had an issue, or (new) a full-pipeline run summary carrying one of the
-ingestion/synthesis reason codes plus the backlog-aware stats block.
+Sends a Telegram notification for one of eight events: a run that couldn't start (lock
+contention), a run that failed mid-pipeline outside the reason-coded stages, a run that
+completed with real synthesis work done, a run that completed with nothing to do, a run
+whose non-critical stage had an issue, a full-pipeline run summary carrying one of the
+ingestion/synthesis reason codes plus the backlog-aware stats block, an urgent
+action-required alert (AuthAlert), or the weekly health heartbeat (Heartbeat).
+
+AuthAlert and Heartbeat take their message body from -Detail. AuthAlert is sent as its
+own short message, separate from the RunSummary, so a logged-out Claude cannot be
+mistaken for a routine run summary.
+
+Test-only hook: WIKIAGENT_NOTIFY_CAPTURE_FILE - if set, the composed message is appended
+to that file (followed by a line containing only "---") and nothing is sent. Checked
+before credential resolution, so a test run never sends a real message even when
+secrets.env is present.
 
 .DESCRIPTION
 Credentials: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Resolved in this order:
@@ -22,7 +31,7 @@ Never throws — a notification failure must never fail the pipeline run itself.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VaultRoot,
-    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess', 'RunSummary')][string]$Event,
+    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess', 'RunSummary', 'AuthAlert', 'Heartbeat')][string]$Event,
     [string]$ExitCode,
     [string]$LogFile,
     [string]$Stats,
@@ -43,21 +52,14 @@ function Import-DotEnv($path) {
     }
 }
 
-if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
-    Import-DotEnv (Join-Path $VaultRoot 'config/secrets.env')
-}
-if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
-    $agentRoot = Split-Path -Parent $PSScriptRoot
-    Import-DotEnv (Join-Path $agentRoot 'secrets.env')
-}
-
-if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
-    Write-Host "Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); skipping notification."
-    return
-}
-
 $now = (Get-Date).ToString('o')
 $message = switch ($Event) {
+    'AuthAlert' {
+        "[ACTION REQUIRED] WikiAgent: $Detail Time: $now"
+    }
+    'Heartbeat' {
+        "WikiAgent weekly heartbeat. Time: $now`n$Detail"
+    }
     'Blocked' {
         "Wiki pipeline did not start for ${vaultName}: another run is already active. Time: $now"
     }
@@ -111,6 +113,25 @@ $message = switch ($Event) {
         if ($s -and $s.PSObject.Properties['softIssue'] -and $s.softIssue) { $lines += "Note: $($s.softIssue)" }
         $lines -join "`n"
     }
+}
+
+if ($env:WIKIAGENT_NOTIFY_CAPTURE_FILE) {
+    Add-Content -LiteralPath $env:WIKIAGENT_NOTIFY_CAPTURE_FILE -Value @("Event=$Event", $message, '---') -Encoding utf8
+    Write-Host "Notification captured to WIKIAGENT_NOTIFY_CAPTURE_FILE (Event=$Event) for ${vaultName}; not sent."
+    return
+}
+
+if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
+    Import-DotEnv (Join-Path $VaultRoot 'config/secrets.env')
+}
+if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
+    $agentRoot = Split-Path -Parent $PSScriptRoot
+    Import-DotEnv (Join-Path $agentRoot 'secrets.env')
+}
+
+if (-not $env:TELEGRAM_BOT_TOKEN -or -not $env:TELEGRAM_CHAT_ID) {
+    Write-Host "Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID); skipping notification."
+    return
 }
 
 try {

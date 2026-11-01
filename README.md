@@ -439,6 +439,28 @@ different:
 Every message also includes a `Stats` line (new/retried/parked video counts) so you
 can see what actually happened without digging into logs.
 
+**Login alerts and the weekly heartbeat.** Two further messages watch the Claude Code
+login, because a logged-out Claude stops synthesis while ingestion and backups carry on:
+
+| Message | When | What to do |
+|---|---|---|
+| `[ACTION REQUIRED] WikiAgent: ...` | A scheduled run found Claude logged out, or the daily health check found it logged out or could not confirm the login. Repeats daily until fixed. | On the VM: `claude auth login`, then `claude auth status --json`. |
+| `WikiAgent weekly heartbeat` | Once a week: login status, then each scheduled vault's synthesised count, backlog and last run result. | Nothing, if it looks right. **If it doesn't arrive, check the VM, the timer and Telegram.** |
+
+The health check runs from the same hourly timer, at 21:00 UTC daily, with the
+heartbeat on Sundays (Monday 08:00 in Sydney under daylight saving, 07:00 otherwise).
+It only runs `claude auth status`, so it uses no Claude usage. To change the hour or
+day, run `sudo systemctl edit wikiagent.service` and add (hour is two digits, UTC;
+day is `Mon`..`Sun`):
+
+```ini
+[Service]
+Environment=WIKIAGENT_HEALTH_CHECK_HOUR_UTC=21
+Environment=WIKIAGENT_HEARTBEAT_DAY_UTC=Sun
+```
+
+To run it by hand: `pwsh agent/scripts/health-check.ps1 -Mode Weekly`.
+
 ## Quick start
 
 By default, this system expects to be deployed as a folder named exactly
