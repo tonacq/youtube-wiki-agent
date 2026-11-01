@@ -179,7 +179,8 @@ Assert-True ($t -match 'VaultC: manifest not found; no dispatch log found') "Vau
 function New-RunVault {
     param([int]$Included, [int]$Pending)
     $vaultRoot = Join-Path $script:tempRoot "HealthTestVault_$([guid]::NewGuid().ToString('N').Substring(0,8))"
-    foreach ($d in @('config', 'config/prompts', 'working/temp', 'wiki/sources', 'logs')) {
+    # Same folder set as vaults/_template: run-qa.ps1 expects the wiki/ subfolders to exist.
+    foreach ($d in @('config', 'config/prompts', 'input', 'working/batches', 'working/temp', 'wiki/sources', 'wiki/concepts', 'wiki/tools', 'wiki/workflows', 'wiki/synthesis', 'logs', 'exports', 'archive', 'reports')) {
         New-Item -ItemType Directory -Force -Path (Join-Path $vaultRoot $d) | Out-Null
     }
     [ordered]@{
@@ -203,7 +204,10 @@ function Invoke-RunVault {
     $out = & pwsh -NoProfile -File $RunVaultScript @runArgs 2>&1
     $exit = $LASTEXITCODE
     Clear-TestEnv
-    [pscustomobject]@{ ExitCode = $exit; Output = ($out -join "`n"); Messages = @(Get-Captured $capture) }
+    $text = ($out -join "`n")
+    $runLog = Get-ChildItem -LiteralPath (Join-Path $VaultRoot 'logs') -Filter 'run_*.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($runLog) { Write-Host "    stages: $((Get-Content -LiteralPath $runLog.FullName -Raw | ConvertFrom-Json).stages | ConvertTo-Json -Compress)" }
+    [pscustomobject]@{ ExitCode = $exit; Output = $text; Messages = @(Get-Captured $capture) }
 }
 
 Write-Host "[8] run-vault, logged out: separate AuthAlert sent before the RunSummary"
@@ -214,7 +218,7 @@ Assert-True ((Get-EventCount $r.Messages 'AuthAlert') -eq 1) "exactly one AuthAl
 Assert-True ((Get-EventCount $r.Messages 'RunSummary') -eq 1) "RunSummary still sent"
 $order = @($r.Messages | ForEach-Object { $_.Event })
 Assert-True ($order.Count -ge 2 -and $order[0] -eq 'AuthAlert' -and $order[-1] -eq 'RunSummary') "AuthAlert comes before RunSummary (order: $($order -join ', '))"
-Assert-True ((Get-EventText $r.Messages 'AuthAlert') -match 'synthesis for HealthTestVault did not run') "AuthAlert names the vault"
+Assert-True ((Get-EventText $r.Messages 'AuthAlert') -match 'synthesis for HealthTestVault_[0-9a-f]{8} did not run') "AuthAlert names the vault"
 
 Write-Host "[9] run-vault, logged in with nothing pending: no AuthAlert"
 $v9 = New-RunVault -Included 3 -Pending 0
