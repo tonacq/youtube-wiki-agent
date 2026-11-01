@@ -98,9 +98,13 @@ function Get-AuthState {
 $enabledVaults = [System.Collections.Generic.List[string]]::new()
 if (Test-Path -LiteralPath $scheduleCsv) {
     try {
-        foreach ($row in @(Import-Csv -LiteralPath $scheduleCsv)) {
-            $name = [string]$row.vault_name
-            if ([string]$row.enabled -ne 'true' -or -not $name -or $name -eq '_template') { continue }
+        # The real schedule.csv is self-documenting: '#' comment lines may sit above the
+        # header row. Drop them (and blank lines) before parsing as CSV.
+        $csvLines = @(Get-Content -LiteralPath $scheduleCsv | Where-Object { $_.Trim() -ne '' -and -not $_.TrimStart().StartsWith('#') })
+        foreach ($row in @($csvLines | ConvertFrom-Csv)) {
+            if (-not $row.PSObject.Properties['vault_name'] -or -not $row.PSObject.Properties['enabled']) { continue }
+            $name = ([string]$row.vault_name).Trim()
+            if (([string]$row.enabled).Trim() -ne 'true' -or -not $name -or $name -eq '_template') { continue }
             if (-not $enabledVaults.Contains($name)) { $enabledVaults.Add($name) }
         }
     } catch {

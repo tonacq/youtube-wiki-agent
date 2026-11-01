@@ -69,7 +69,14 @@ function New-TestRoot {
     $root = Join-Path $script:tempRoot "root_$([guid]::NewGuid().ToString('N').Substring(0,8))"
     New-Item -ItemType Directory -Force -Path (Join-Path $root 'agent/scheduling/dispatch-logs') | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $root 'vaults/_template') | Out-Null
-    $csv = @('vault_name,job_type,day_of_week,time_utc,enabled,batch_size,batch_iterations,continuity') + $ScheduleRows
+    # Comment lines above the header, as in the real, self-documenting schedule.csv.
+    $csv = @(
+        '# full = channel ingestion + synthesis, runs weekly on the nominated day and time',
+        '# lint-review = vault maintenance review, runs on the LAST occurrence of the',
+        '#   nominated day each month (e.g. day=Sat -> the final Saturday of the month),',
+        '#   at the nominated time - see schedule-contract.md for full detail',
+        'vault_name,job_type,day_of_week,time_utc,enabled,batch_size,batch_iterations,continuity'
+    ) + $ScheduleRows
     ($csv -join "`n") | Out-File -LiteralPath (Join-Path $root 'agent/scheduling/schedule.csv') -Encoding utf8
     return $root
 }
@@ -113,7 +120,7 @@ Write-Host "Temp: $script:tempRoot"
 Write-Host ""
 
 # Standard root for the health-check scenarios: VaultA enabled (2 rows), VaultB disabled.
-$rootStd = New-TestRoot -ScheduleRows @('VaultA,full,Sun,15:00,true,10,12,true', 'VaultA,full,Mon,07:00,true,10,12,true', 'VaultB,full,Sat,18:00,false,,,')
+$rootStd = New-TestRoot -ScheduleRows @('_template,full,Sun,09:00,true,,,', 'VaultA,full,Sun,15:00,true,10,12,true', 'VaultA,full,Mon,07:00,true,10,12,true', 'VaultB,full,Sat,18:00,false,,,')
 New-ManifestFile -Path (Join-Path $rootStd 'vaults/VaultA/working/manifest.csv') -Included 7 -Pending 2 -Partial 1
 New-ManifestFile -Path (Join-Path $rootStd 'vaults/VaultB/working/manifest.csv') -Included 1 -Pending 0
 $logA = Join-Path $rootStd 'agent/scheduling/dispatch-logs/VaultA_full_20261026T070132Z.log'
