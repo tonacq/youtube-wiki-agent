@@ -106,7 +106,7 @@ as input to an LLM synthesis step. Before pointing this at any channel:
 ## Architecture
 
 ```
-agentic-knowledge-vault-pipeline/
+youtube-wiki-agent/
 │
 ├── agent/                    shared code — one copy, used by every vault
 │   ├── scripts/               ingest-youtube.ps1, run-vault.ps1, etc.
@@ -276,9 +276,72 @@ Some YouTube channels require an authenticated session to reliably serve caption
    Claude Code — only referenced by path.
 3. Set `cookie_file` in the relevant vault's `config/vault.json` to the real path
    on the host.
-4. Treat the cookie file itself as a credential: keep it out of git (already
-   excluded via `.gitignore`'s `vaults/*` pattern), restrict its file permissions,
-   and rotate/re-export it if the source browser session's login changes.
+4. Treat the cookie file itself as a credential: keep it out of git (real files
+   under `agent/secrets/` are excluded via `.gitignore`'s `agent/secrets/*` pattern
+   — see "Fresh Install: Credential Setup" below for the full layout), restrict
+   its file permissions, and rotate/re-export it if the source browser session's
+   login changes.
+
+## Fresh Install: Credential Setup
+
+All real credentials this pipeline uses — per-channel YouTube cookie files, the
+Telegram bot token/chat ID, and the WireGuard proxy config — live under
+`agent/secrets/` and `agent/secrets.env`. Neither is created by cloning this repo;
+both are gitignored on purpose (see `.gitignore`'s `agent/secrets/*` and
+`agent/secrets.env` rules) so real credentials never end up in git. Every real
+file has a git-tracked `.example` template next to it (or, for `agent/secrets.env`,
+alongside it as `agent/secrets.env.example`) showing the exact structure to fill in.
+
+1. **Cookie files and the WireGuard proxy config**: for each `.example` file under
+   `agent/secrets/`, copy it to the same name with `.example` stripped, then fill
+   in real values:
+   ```bash
+   cd agent/secrets
+   cp wireproxy-youtube.conf.example wireproxy-youtube.conf
+   cp proton-youtube.conf.example proton-youtube.conf
+   # cookie files: see step 3 below for the real per-vault naming
+   ```
+   `proton-youtube.conf` needs a real WireGuard client config (private key, address,
+   peer public key, endpoint) from your VPN provider — see "YouTube access via
+   VPN/proxy" in `agent/docs/README.md` for why this is needed and what it's for.
+
+2. **Telegram notifications**: copy `agent/secrets.env.example` to `agent/secrets.env`
+   and fill in your real bot token and chat ID:
+   ```bash
+   cp agent/secrets.env.example agent/secrets.env
+   ```
+   See "Telegram notifications" above for how to obtain those two values. This is
+   the shared/agent-level file — a vault can override it with its own
+   `config/secrets.env` (see `vaults/_template/config/secrets.env.example`) if you
+   want a different bot/chat per vault.
+
+3. **Per-vault cookie files**: create one cookie file per vault that needs one,
+   named `<vault_name>_youtube_cookies.txt` under `agent/secrets/` — the
+   `<vault_name>` must match that vault's own `vault_name` in its
+   `config/vault.json` exactly (see `agent/secrets/example_channel_name_youtube_cookies.txt.example`
+   for the real Netscape cookie-file format `yt-dlp` expects). Follow "Cookie file
+   setup" above for how to actually export one from a real browser session.
+
+4. **Point each vault at its cookie file**: set `cookie_file` in that vault's own
+   `config/vault.json` to the real absolute path of the file you just created under
+   `agent/secrets/` (e.g. `/home/ubuntu/wiki-agent-pipeline/agent/secrets/mychannel_youtube_cookies.txt`).
+
+5. **`wireproxy-youtube.service` is a separate, manual, per-machine OS-level setup
+   step — it is NOT created by cloning this repo.** It must be created fresh on
+   every new install: a systemd unit at `/etc/systemd/system/wireproxy-youtube.service`
+   whose `ExecStart` line points `wireproxy` at the real absolute path of your
+   `wireproxy-youtube.conf` on that specific machine, then `sudo systemctl
+   daemon-reload` and `sudo systemctl enable --now wireproxy-youtube.service`. This
+   is what actually runs the proxy that `vault.json`'s `proxy` field (and, upstream
+   of it, `wireproxy-youtube.conf`'s own `WGConfig` line) depends on.
+
+6. **This pipeline uses absolute paths throughout, with no runtime path
+   resolution** — `cookie_file` in each `vault.json`, `ExecStart` in the systemd
+   unit, and `WGConfig` in `wireproxy-youtube.conf` are all literal, hardcoded
+   paths, passed straight through with no rewriting. None of these can be copied
+   verbatim from another machine's setup (or from this doc's own examples) — every
+   one must be manually updated to match the new machine's actual username and
+   home directory.
 
 ## Claude Code / Claude API authentication
 
@@ -378,22 +441,44 @@ can see what actually happened without digging into logs.
 
 ## Quick start
 
-By default, this system expects to be deployed as a folder named exactly `WikiAgent`.
-It can, however, be renamed and located anywhere, and can run as any Linux user —
-running `install.sh` (see repo root) handles both automatically. Run it once after
-initial deployment, and again any time the folder is later moved, renamed, or its
-ownership changes: it detects and re-applies whatever is currently true each time it
-runs, but has no way to notice a move on its own — if the deployment is relocated
-without re-running it, the scheduled timer keeps pointing at the old, now-incorrect
-location and silently stops firing.
+By default, this system expects to be deployed as a folder named exactly
+`wiki-agent-pipeline`. It can, however, be renamed and located anywhere, and can run
+as any Linux user — running `install.sh` (see below) handles both automatically. Run
+it once after initial deployment, and again any time the folder is later moved,
+renamed, or its ownership changes: it detects and re-applies whatever is currently
+true each time it runs, but has no way to notice a move on its own — if the
+deployment is relocated without re-running it, the scheduled timer keeps pointing at
+the old, now-incorrect location and silently stops firing.
 
 ```bash
-# 1. Deploy this whole WikiAgent/ folder to the target host (e.g. /home/ubuntu/WikiAgent)
+# 1. Deploy this whole repo to the target host as a folder named exactly
+#    wiki-agent-pipeline, under /home/ubuntu/ (e.g. /home/ubuntu/wiki-agent-pipeline)
 # 2. Copy the template for a new vault:
 cp -r vaults/_template vaults/MyNewVault
 # 3. Edit vaults/MyNewVault/config/vault.json (channel_url, creator, drive_path, etc.)
 # 4. Add one row to agent/scheduling/schedule.csv:
 #    MyNewVault,full,Sun,09:00,true
+```
+
+> **The folder name and location above are load-bearing — read this before step 5.**
+> The systemd unit files shipped in this repo
+> (`agent/scheduling/ubuntu/systemd/wikiagent.service`) hardcode the path
+> `/home/ubuntu/wiki-agent-pipeline`. If you deployed to exactly that folder
+> name and location in step 1, the commands below work with zero edits.
+> **If you used a different name or location, the timer will install and
+> enable successfully but will silently never fire** — there's no error, it
+> just never runs. Either:
+> - run `sudo ./install.sh` instead of the commands below — it detects your
+>   real install path automatically and generates the correct unit files for
+>   you, whatever you named the folder or wherever you put it. This is the
+>   recommended option unless you have a specific reason to edit the unit
+>   file yourself; see "Recommended: `install.sh`" below for exactly what it
+>   does and doesn't do — or
+> - manually edit the `WorkingDirectory` and `ExecStart` lines in
+>   `agent/scheduling/ubuntu/systemd/wikiagent.service` to match your real
+>   path before running the commands below.
+
+```bash
 # 5. Install the systemd units and enable the timer:
 sudo cp agent/scheduling/ubuntu/systemd/*.service agent/scheduling/ubuntu/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -405,6 +490,32 @@ pwsh agent/tests/architecture-conformance-test.ps1 -RootPath . -ReportPath confo
 `schedule.csv` only expresses a weekly day/time — for the `lint-review` job type this
 maps to a monthly cadence, not weekly; see `agent/docs/schedule-contract.md` for the
 exact rule before assuming a lint-review row runs every week.
+
+### Recommended: `install.sh`
+
+Run this once, from the repo root, after copying/unzipping the repo onto your host —
+`sudo ./install.sh` — as an alternative to step 5 above and to manually editing
+`wikiagent.service`. It detects the repo's real current location itself (whatever you
+named the folder, wherever you put it) and generates the systemd unit files against
+that real path, rather than relying on the checked-in files' hardcoded
+`/home/ubuntu/wiki-agent-pipeline`. Safe to re-run any time — it detects an
+already-installed, already-active timer and reports that rather than erroring or
+duplicating anything.
+
+**What it does**: checks that `pwsh`, `rclone`, and `systemctl` are present (fails
+with a clear, specific message naming what's missing if not — it does not install
+them for you); generates and installs the two systemd unit files with the correct
+real path; enables and starts the hourly timer; creates `agent/scheduling/schedule.csv`
+from `schedule.csv.example` (header row only) if one doesn't already exist, and leaves
+it untouched if it does.
+
+**What it explicitly does not do** — still your responsibility, same as if you'd run
+step 5 manually: it does not create a vault, does not edit any `vault.json`, and does
+not touch credentials or proxy setup (rclone remote, Claude Code auth, Telegram
+bot/chat, cookie files, WireGuard/proxy config — see "Fresh Install: Credential
+Setup" below) or any of the other prerequisites in "Prerequisites and host setup".
+Those all remain manual, one-time steps this script assumes are already done, or that
+you'll still do afterward.
 
 ## Config field reference (`config/vault.json`)
 
@@ -501,7 +612,7 @@ To upgrade an existing installation in place:
 
 ```bash
 # 1. Pull the latest commits into the existing clone
-cd /path/to/WikiAgent   # e.g. /home/ubuntu/WikiAgent
+cd /path/to/wiki-agent-pipeline   # e.g. /home/ubuntu/wiki-agent-pipeline, or wherever you actually deployed it
 git pull
 
 # 2. Re-verify architecture conformance against the updated code
@@ -565,7 +676,7 @@ directory is only ever a working copy (see `agent/scripts/sync-vault.ps1`'s own 
    ```
 4. Only after steps 1–3: delete the repo folder.
    ```bash
-   rm -rf /path/to/WikiAgent
+   rm -rf /path/to/wiki-agent-pipeline   # e.g. /home/ubuntu/wiki-agent-pipeline, or wherever you actually deployed it
    ```
 
 **Verified for real** (disposable scratch clone + scratch vault, never against real vault

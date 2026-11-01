@@ -9,3 +9,10 @@ agent/scheduling/schedule.csv
 agent/scheduling/dispatch-logs/
 **/working/temp/ingest-errors.log
 conformance-report*.json
+agent/secrets/*
+!agent/secrets/*.example
+agent/secrets.env
+
+# Local-only report output from token-usage-report.sh - real per-vault token history,
+# same treatment as schedule.csv/manifest.csv (the script itself is tracked)
+token-usage.csv
