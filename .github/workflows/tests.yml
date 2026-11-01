@@ -1,0 +1,34 @@
+# Runs the self-contained test suites on every push and pull request.
+# The suites use disposable temp folders and a mock Claude (agent/tests/fixtures/mock-claude.ps1):
+# no real Claude call, no Telegram message, no vault data, no secrets.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PowerShell version
+        run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - name: Dispatcher syntax
+        run: bash -n agent/scheduling/ubuntu/run-wikiagent.sh
+
+      - name: Synthesis runner suite
+        run: pwsh -NoProfile -File agent/tests/run-claude-synthesis-test.ps1
+
+      - name: Health check and login alert suite
+        run: pwsh -NoProfile -File agent/tests/health-check-test.ps1
+
+      - name: Architecture conformance
+        run: pwsh -NoProfile -File agent/tests/architecture-conformance-test.ps1 -RootPath .
