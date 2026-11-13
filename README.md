@@ -461,6 +461,40 @@ Environment=WIKIAGENT_HEARTBEAT_DAY_UTC=Sun
 
 To run it by hand: `pwsh agent/scripts/health-check.ps1 -Mode Weekly`.
 
+**Parked-source alert.** A source that comes back unincluded from a batch that otherwise
+worked has one synthesis attempt counted (`synthesis_attempts` in the manifest). At
+`max_synthesis_attempts` (default 3) it is set to `parked_synthesis`, no batch selects it
+again, and a separate message is sent:
+
+| Message | When | What to do |
+|---|---|---|
+| `[ACTION REQUIRED] WikiAgent <vault>: N source(s) could not be synthesised ...` | A run parked one or more sources. Lists each video_id and title. | Usually the source page does not hold that video's transcript. Run `pwsh agent/scripts/requeue-shared-sources.ps1 -VaultRoot vaults/<vault>` (dry run), then add `-Apply` to requeue the affected rows. |
+
+## Source pages: one per video, and requeueing
+
+`create-source-pages.ps1` names each page `wiki/sources/src_<video_id>_<title-slug>.md`,
+so two videos with the same title (for example short posts all titled "Post by @...")
+each get their own page. A row is only marked `ingested` when its page holds its own
+transcript: if the clean transcript is missing no page is written, and a page at the
+target path that belongs to another video_id is never reused.
+
+Vaults ingested before this naming can hold rows that point at another video's page.
+`agent/scripts/requeue-shared-sources.ps1` finds them:
+
+```bash
+pwsh agent/scripts/requeue-shared-sources.ps1 -VaultRoot vaults/<vault>          # dry run, changes nothing
+pwsh agent/scripts/requeue-shared-sources.ps1 -VaultRoot vaults/<vault> -Apply   # backup, then requeue
+```
+
+- Requeued: rows not yet `included` whose page is missing or belongs to another video,
+  and every row already contained as `blocked_missing_transcript`. They are set to
+  `transcript_status = requeued`; the next run downloads their captions again before,
+  and independent of, the backlog target, then builds a page of their own.
+- Reported only: `included` rows whose page is not their own. They may have been
+  synthesised against another video's transcript; review them by hand.
+- `-Apply` writes `working/manifest.csv.bak_requeue_<timestamp>` first and refuses to run
+  while the vault's run lock exists. It uses no Claude usage.
+
 ## Quick start
 
 By default, this system expects to be deployed as a folder named exactly
@@ -564,6 +598,7 @@ if you leave it at its template default:
 | `batch_iterations` | Max number of `batch_size`-sized batches attempted per run (ingestion target = `batch_size * batch_iterations` minus the existing synthesis backlog; synthesis loops up to this many real Claude Code calls) | **Required — no code-level default.** Same throw behavior as `batch_size` |
 | `ingest_failure_ceiling` | Consecutive ingestion failures (any type — `failed`, `failed_blocked`, `missing_transcript`, newly-`parked`) that stop a walk early, independent of whether the ingestion target was reached | Defaults to `12` if unset |
 | `continuity` | Whether a detected Claude Code session/usage limit during synthesis sleeps in-process and resumes the same run, vs. stopping cleanly and reporting it | Defaults to `false` if unset (stop cleanly, no sleep — see `INGEST_FAILURE_CEILING`/`SYNTHESIS_LIMIT_HIT` reason codes) |
+| `max_synthesis_attempts` | Batches a source may come back unincluded from (in a batch that otherwise worked) before it is set to `parked_synthesis` and an `[ACTION REQUIRED]` alert is sent | Defaults to `3` if unset |
 | `claude_call_timeout_seconds` | Wall-clock timeout per individual Claude Code batch call, enforced via `Start-Job`/`Wait-Job` | Defaults to `1800` (30 minutes) if unset |
 | `documents.enabled` / `documents.supported_extensions` | Controls manual document ingestion from `input/` | See `agent/docs/README.md`'s "Document ingestion" section before relying on this |
 | `backup.enabled` | Whether `backup-vault.ps1` runs at all | `true` in template; set `false` to disable |

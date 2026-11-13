@@ -328,6 +328,7 @@ if ($ContinuityOverride.Trim() -ne '') {
 } else {
     $continuity = if ($config.PSObject.Properties['continuity'] -and $config.continuity) { [bool]$config.continuity } else { $false }
 }
+$maxSynthesisAttempts = if ($config.PSObject.Properties['max_synthesis_attempts'] -and $config.max_synthesis_attempts) { [int]$config.max_synthesis_attempts } else { 3 }
 $claudeTimeoutSeconds = if ($config.PSObject.Properties['claude_call_timeout_seconds'] -and $config.claude_call_timeout_seconds) { [int]$config.claude_call_timeout_seconds } else { 1800 }
 
 # Ported from the proven standalone predecessor's Get-ResetSleepSeconds (confirmed
@@ -375,11 +376,23 @@ function Get-IncludedCount {
 function Set-PartialStatus {
     param(
         [string]$ManifestPath,
-        [string[]]$VideoIds
+        [string[]]$VideoIds,
+        # Set only where the batch itself worked and these rows alone came back
+        # unincluded (SYNTHESIS_PARTIAL) - evidence about the rows, not about the run.
+        # Each such mark adds one to synthesis_attempts; at $maxSynthesisAttempts the row
+        # is set to 'parked_synthesis' instead of 'partial', which no batch selects, so a
+        # source Claude cannot use stops taking a batch slot in every batch of every run.
+        [switch]$CountAttempt
     )
-    if (-not $VideoIds -or $VideoIds.Count -eq 0) { return }
+    $parked = @()
+    if (-not $VideoIds -or $VideoIds.Count -eq 0) { return $parked }
     $rows = @(Import-Csv -LiteralPath $ManifestPath)
     $touched = $false
+    foreach ($row in $rows) {
+        if (-not $row.PSObject.Properties['synthesis_attempts']) {
+            $row | Add-Member -NotePropertyName synthesis_attempts -NotePropertyValue '' -Force
+        }
+    }
     foreach ($row in $rows) {
         if ($VideoIds -notcontains $row.video_id) { continue }
         # Finding D's rule (never downgrade 'included') applies here too - only promote a
@@ -387,7 +400,18 @@ function Set-PartialStatus {
         # marked included between our read and this write (e.g. a shared-citation
         # disk-truth match on a later pass).
         if ($row.synthesis_status -eq 'included') { continue }
-        $row.synthesis_status       = 'partial'
+        $newStatus = 'partial'
+        if ($CountAttempt) {
+            $attempts = 0
+            [void][int]::TryParse([string]$row.synthesis_attempts, [ref]$attempts)
+            $attempts++
+            $row.synthesis_attempts = [string]$attempts
+            if ($attempts -ge $maxSynthesisAttempts) {
+                $newStatus = 'parked_synthesis'
+                $parked += $row.video_id
+            }
+        }
+        $row.synthesis_status       = $newStatus
         $row.synthesis_last_checked = (Get-Date).ToString('yyyy-MM-dd')
         $row.last_updated           = (Get-Date).ToString('o')
         $touched = $true
@@ -397,6 +421,7 @@ function Set-PartialStatus {
         $rows | Export-Csv -LiteralPath $tmp -NoTypeInformation -Encoding utf8
         Move-Item -LiteralPath $tmp -Destination $ManifestPath -Force
     }
+    return $parked
 }
 
 # Fix (review round 2, item 1): "a Claude invocation was attempted" is not the same
@@ -478,7 +503,8 @@ function Write-SynthesisRunResult {
         [int]$BatchesCompleted = 0,
         [string]$ErrorSnippet = '',
         [string]$SleptUntil = '',
-        [array]$DroppedSources = @()
+        [array]$DroppedSources = @(),
+        [array]$ParkedSources = @()
     )
     New-Item -ItemType Directory -Force -Path (Split-Path -Path $synthesisRunResultPath -Parent) | Out-Null
     [ordered]@{
@@ -496,6 +522,7 @@ function Write-SynthesisRunResult {
         errorSnippet          = $ErrorSnippet
         sleptUntil            = $SleptUntil
         droppedSources        = $DroppedSources
+        parkedSources         = $ParkedSources
         runId                 = $runId
         diagnosticsFile       = $runDiagnosticsPath
         timestamp             = (Get-Date).ToString('o')
@@ -519,6 +546,9 @@ $hadPartialThisRun = $false
 # reasonCode itself stays SYNTHESIS_PARTIAL for the whole run regardless (see
 # .DESCRIPTION) as a durable "this run needed recovery" signal.
 $droppedSourcesThisRun = [ordered]@{}
+# Sources set to parked_synthesis this run (see Set-PartialStatus); reported to
+# run-vault.ps1, which sends a separate [ACTION REQUIRED] alert for them.
+$parkedSourcesThisRun = [ordered]@{}
 $diagnosticsLogPath = Join-Path $VaultRoot 'working/temp/synthesis-partial-diagnostics.jsonl'
 
 # --- Fix 2: top-level try/catch/finally around the synthesis lifecycle ---------------
@@ -665,7 +695,7 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
             # decision uses only the pre-QA snapshot taken above.
             $partialMarked = $false
             if ($mutatedFiles.Count -gt 0) {
-                Set-PartialStatus -ManifestPath $manifestPath -VideoIds $thisBatchIds
+                [void](Set-PartialStatus -ManifestPath $manifestPath -VideoIds $thisBatchIds)
                 $partialMarked = $true
             }
             Write-Diag -Event 'batch_outcome' -Fields @{ batchId = $batchId; classification = 'SYNTHESIS_TIMEOUT'; includedBefore = $includedBeforeBatch; includedAfter = $includedAfterTimeout; acceptedCount = ($includedAfterTimeout - $includedBeforeBatch); droppedCount = $thisBatchIds.Count; droppedIds = $thisBatchIds; mutationEvidenceCount = $mutatedFiles.Count; mutationEvidence = $mutatedFiles; partialMarked = $partialMarked }
@@ -803,7 +833,7 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
             # run by this point) - reuses the pre-QA snapshot only.
             $partialMarked = $false
             if ($mutatedFiles.Count -gt 0) {
-                Set-PartialStatus -ManifestPath $manifestPath -VideoIds $thisBatchIds
+                [void](Set-PartialStatus -ManifestPath $manifestPath -VideoIds $thisBatchIds)
                 $partialMarked = $true
             }
             Write-Diag -Event 'batch_outcome' -Fields @{ batchId = $batchId; classification = $batchClassification; includedBefore = $includedBeforeBatch; includedAfter = $includedAfterBatch; acceptedCount = 0; droppedCount = $thisBatchIds.Count; droppedIds = $thisBatchIds; resultBatchMismatch = $resultBatchMismatch; errorSnippet = $errorSnippet; mutationEvidenceCount = $mutatedFiles.Count; mutationEvidence = $mutatedFiles; partialMarked = $partialMarked }
@@ -818,7 +848,13 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
             # cause fixed here.
             $hadPartialThisRun = $true
             $reasonCode = 'SYNTHESIS_PARTIAL'
-            Set-PartialStatus -ManifestPath $manifestPath -VideoIds $droppedIds
+            $parkedNow = @(Set-PartialStatus -ManifestPath $manifestPath -VideoIds $droppedIds -CountAttempt)
+            foreach ($pid_ in $parkedNow) {
+                $prow = $thisBatch | Where-Object { $_.video_id -eq $pid_ } | Select-Object -First 1
+                $parkedSourcesThisRun[$pid_] = [ordered]@{ videoId = $pid_; title = $prow.title; sourceFile = $prow.source_file; attempts = $maxSynthesisAttempts }
+                Write-Warning "SYNTHESIS_PARKED: video_id=$pid_ title='$($prow.title)' not included after $maxSynthesisAttempts attempts - set to parked_synthesis; no batch will select it again."
+            }
+            if ($parkedNow.Count -gt 0) { Write-Diag -Event 'sources_parked' -Fields @{ batchId = $batchId; videoIds = $parkedNow; maxSynthesisAttempts = $maxSynthesisAttempts } }
 
             foreach ($id in $droppedIds) {
                 $row = $thisBatch | Where-Object { $_.video_id -eq $id } | Select-Object -First 1
@@ -874,7 +910,7 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
         Write-Warning "Could not recompute actualSynthesized in finally block: $($_.Exception.Message)"
     }
     try {
-        Write-SynthesisRunResult -ReasonCode $reasonCode -BatchesCompleted $batchesCompleted -ErrorSnippet $errorSnippet -SleptUntil $sleptUntil -DroppedSources @($droppedSourcesThisRun.Values)
+        Write-SynthesisRunResult -ReasonCode $reasonCode -BatchesCompleted $batchesCompleted -ErrorSnippet $errorSnippet -SleptUntil $sleptUntil -DroppedSources @($droppedSourcesThisRun.Values) -ParkedSources @($parkedSourcesThisRun.Values)
         Write-Diag -Event 'run_end' -Fields @{ reasonCode = $reasonCode; batchesCompleted = $batchesCompleted; actualSynthesized = $actualSynthesized; droppedThisRun = $droppedSourcesThisRun.Count }
     } catch {
         Write-Warning "Could not write synthesis-run-result.json in finally block: $($_.Exception.Message)"

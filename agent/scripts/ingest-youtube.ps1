@@ -144,55 +144,11 @@ function Write-IngestResult {
     } | ConvertTo-Json | Out-File -LiteralPath $ingestResultPath -Encoding utf8 -Force
 }
 
-if ($ingestionTarget -eq 0) {
-    # Existing backlog already covers this run's whole target - skip the walk entirely.
-    # Still need a real channel count for the Telegram stats block, via a scan-only call
-    # (same flags as the real walk would use, just never reached this run).
-    $scanResults = & $ytdlp @ytArgs 2>&1
-    $catalogueCount = if ($LASTEXITCODE -eq 0) { @($scanResults | Where-Object { $_ -match '\|' }).Count } else { -1 }
-    Write-IngestResult -ReasonCode 'BACKLOG_PRIORITY_SKIP' -CatalogueCount $catalogueCount
-    Write-Host "Backlog ($carryover) already covers this run's target ($($batchSize * $batchIterations)); skipping ingestion walk."
-    return
-}
-
-$scanResults = & $ytdlp @ytArgs 2>&1
-if ($LASTEXITCODE -ne 0) {
-    $scanText = $scanResults -join ' '
-    # Strict, unambiguous block/throttle detection only - same signal set as the per-video
-    # failed_blocked check below. KEEP STRICT - do not broaden.
-    $reasonCode = if ($scanText -match 'HTTP Error 429|Too Many Requests|HTTP Error 403|HTTP Error 402|Sign in to confirm you.?re not a bot') { 'INGEST_BLOCKED' } else { 'INGEST_ERROR' }
-    Write-IngestResult -ReasonCode $reasonCode
-    throw "yt-dlp channel scan failed (exit code $LASTEXITCODE): $scanText"
-}
-$scanned = @($scanResults | Where-Object { $_ -match '\|' })
-$catalogueCount = $scanned.Count   # real total channel size - free, from this same scan
-
-$newRows = @()
-$skippedAlreadyParked = 0
-$newIngestedCount = 0
-$retriedCount = 0
-$parkedThisRun = 0
-$successCount = 0
-$anyAttempted = $false
-$walked = 0
-$consecutiveFailures = 0
-$ceilingTripped = $false
-
-foreach ($line in $scanned) {
-    if ($successCount -ge $ingestionTarget) { break }   # walk-and-count stop condition
-    $walked++
-    $parts = $line -split '\|', 2
-    if ($parts.Count -lt 2) { continue }
-    $id, $title = $parts
-
-    $existing = $knownIds[$id]
-    if ($existing -and $existing.transcript_status -eq 'parked') {
-        $skippedAlreadyParked++
-        continue
-    }
-    $needsRetry = $existing -and ($existing.transcript_status -like 'missing*' -or $existing.transcript_status -like 'failed*')
-    if ($existing -and -not $needsRetry) { continue }  # already downloaded, nothing to do
-    $anyAttempted = $true
+# Downloads and selects captions for one video, returning its new manifest row (the
+# caller merges it and keeps the counters). Shared by the requeue pass and the channel walk.
+function Invoke-CaptionDownload {
+    param([string]$id, [string]$title, $existing)
+    $dlOutput = @()
     $attemptsSoFar = if ($existing -and $existing.PSObject.Properties['transcript_attempts']) { [int]$existing.transcript_attempts } else { 0 }
 
     $dlArgs = @(
@@ -251,10 +207,6 @@ foreach ($line in $scanned) {
         Write-Warning "Video $id ($title): reached $attempts/$maxAttempts attempts - parking permanently."
     }
 
-    if ($existing) { $retriedCount++ } else { $newIngestedCount++ }
-    if ($status -eq 'parked') { $parkedThisRun++ }
-    if ($status -eq 'downloaded') { $successCount++ }
-
     $row = [ordered]@{
         video_id                = $id
         title                   = $title
@@ -274,7 +226,101 @@ foreach ($line in $scanned) {
         checksum                = ''
         last_updated            = (Get-Date).ToString('o')
     }
-    $newRows += [pscustomobject]$row
+    return [pscustomobject]$row
+}
+
+# Requeue pass: rows set to transcript_status = requeued (by
+# agent/scripts/requeue-shared-sources.ps1) have their captions downloaded again here,
+# before and independent of the backlog target - so a repair is not held back by
+# BACKLOG_PRIORITY_SKIP. They do not count towards ingestion_target. The same circuit
+# breaker applies.
+$newRows = @()
+$requeuedAttempted = 0
+$requeuedDownloaded = 0
+$requeueFailures = 0
+$requeueCeilingTripped = $false
+foreach ($existing in @($manifest | Where-Object { $_.transcript_status -eq 'requeued' })) {
+    $requeuedAttempted++
+    $row = Invoke-CaptionDownload -id $existing.video_id -title $existing.title -existing $existing
+    $newRows += $row
+    if ($row.transcript_status -eq 'downloaded') { $requeuedDownloaded++; $requeueFailures = 0 } else { $requeueFailures++ }
+    if ($requeueFailures -ge $failureCeiling) {
+        Write-Warning "INGEST_FAILURE_CEILING during requeue pass: $requeueFailures consecutive failures."
+        $requeueCeilingTripped = $true
+        break
+    }
+}
+if ($requeuedAttempted -gt 0) {
+    Write-Host "Requeue pass: $requeuedDownloaded of $requeuedAttempted requeued video(s) downloaded."
+}
+
+function Save-ManifestWithNewRows {
+    if ($newRows.Count -eq 0) { return }
+    # Atomic write: build the full manifest in memory, write to temp, then replace.
+    $merged = @($manifest | Where-Object { -not ($newRows.video_id -contains $_.video_id) }) + $newRows
+    $tmp = "$manifestPath.tmp"
+    $merged | Export-Csv -LiteralPath $tmp -NoTypeInformation -Encoding utf8
+    Move-Item -LiteralPath $tmp -Destination $manifestPath -Force
+}
+
+if ($ingestionTarget -eq 0) {
+    # Existing backlog already covers this run's whole target - skip the walk entirely.
+    # Still need a real channel count for the Telegram stats block, via a scan-only call
+    # (same flags as the real walk would use, just never reached this run).
+    $scanResults = & $ytdlp @ytArgs 2>&1
+    $catalogueCount = if ($LASTEXITCODE -eq 0) { @($scanResults | Where-Object { $_ -match '\|' }).Count } else { -1 }
+    Save-ManifestWithNewRows
+    $skipCode = if ($requeueCeilingTripped) { 'INGEST_FAILURE_CEILING' } else { 'BACKLOG_PRIORITY_SKIP' }
+    Write-IngestResult -ReasonCode $skipCode -CatalogueCount $catalogueCount -Retried $requeuedAttempted
+    Write-Host "Backlog ($carryover) already covers this run's target ($($batchSize * $batchIterations)); skipping ingestion walk."
+    return
+}
+
+$scanResults = & $ytdlp @ytArgs 2>&1
+if ($LASTEXITCODE -ne 0) {
+    $scanText = $scanResults -join ' '
+    # Strict, unambiguous block/throttle detection only - same signal set as the per-video
+    # failed_blocked check below. KEEP STRICT - do not broaden.
+    $reasonCode = if ($scanText -match 'HTTP Error 429|Too Many Requests|HTTP Error 403|HTTP Error 402|Sign in to confirm you.?re not a bot') { 'INGEST_BLOCKED' } else { 'INGEST_ERROR' }
+    Save-ManifestWithNewRows
+    Write-IngestResult -ReasonCode $reasonCode -Retried $requeuedAttempted
+    throw "yt-dlp channel scan failed (exit code $LASTEXITCODE): $scanText"
+}
+$scanned = @($scanResults | Where-Object { $_ -match '\|' })
+$catalogueCount = $scanned.Count   # real total channel size - free, from this same scan
+
+$skippedAlreadyParked = 0
+$newIngestedCount = 0
+$retriedCount = $requeuedAttempted
+$parkedThisRun = @($newRows | Where-Object { $_.transcript_status -eq 'parked' }).Count
+$successCount = 0
+$anyAttempted = $false
+$walked = 0
+$consecutiveFailures = 0
+$ceilingTripped = $requeueCeilingTripped
+
+foreach ($line in $scanned) {
+    if ($ceilingTripped) { break }
+    if ($successCount -ge $ingestionTarget) { break }   # walk-and-count stop condition
+    $walked++
+    $parts = $line -split '\|', 2
+    if ($parts.Count -lt 2) { continue }
+    $id, $title = $parts
+
+    $existing = $knownIds[$id]
+    if ($existing -and $existing.transcript_status -eq 'parked') {
+        $skippedAlreadyParked++
+        continue
+    }
+    $needsRetry = $existing -and ($existing.transcript_status -like 'missing*' -or $existing.transcript_status -like 'failed*')
+    if ($existing -and -not $needsRetry) { continue }  # already downloaded, nothing to do
+    $anyAttempted = $true
+    $row = Invoke-CaptionDownload -id $id -title $title -existing $existing
+    $status = $row.transcript_status
+    if ($existing) { $retriedCount++ } else { $newIngestedCount++ }
+    if ($status -eq 'parked') { $parkedThisRun++ }
+    if ($status -eq 'downloaded') { $successCount++ }
+    $newRows += $row
 
     # Circuit breaker check - after this candidate's row is already recorded (its real
     # outcome is kept either way), so an early stop never discards the attempt that
@@ -292,13 +338,7 @@ foreach ($line in $scanned) {
     }
 }
 
-if ($newRows.Count -gt 0) {
-    # Atomic write: build the full manifest in memory, write to temp, then replace.
-    $merged = @($manifest | Where-Object { -not ($newRows.video_id -contains $_.video_id) }) + $newRows
-    $tmp = "$manifestPath.tmp"
-    $merged | Export-Csv -LiteralPath $tmp -NoTypeInformation -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $manifestPath -Force
-}
+Save-ManifestWithNewRows
 
 $reasonCode = if ($ceilingTripped) { 'INGEST_FAILURE_CEILING' }
               elseif ($successCount -ge $ingestionTarget) { 'TARGET_MET' }

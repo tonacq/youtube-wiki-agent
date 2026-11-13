@@ -1,15 +1,16 @@
 <#
 .SYNOPSIS
-Sends a Telegram notification for one of eight events: a run that couldn't start (lock
+Sends a Telegram notification for one of nine events: a run that couldn't start (lock
 contention), a run that failed mid-pipeline outside the reason-coded stages, a run that
 completed with real synthesis work done, a run that completed with nothing to do, a run
 whose non-critical stage had an issue, a full-pipeline run summary carrying one of the
 ingestion/synthesis reason codes plus the backlog-aware stats block, an urgent
-action-required alert (AuthAlert), or the weekly health heartbeat (Heartbeat).
+action-required alert (AuthAlert or SynthesisAlert), or the weekly health heartbeat
+(Heartbeat).
 
-AuthAlert and Heartbeat take their message body from -Detail. AuthAlert is sent as its
-own short message, separate from the RunSummary, so a logged-out Claude cannot be
-mistaken for a routine run summary.
+AuthAlert, SynthesisAlert and Heartbeat take their message body from -Detail. AuthAlert
+and SynthesisAlert are sent as their own short messages, separate from the RunSummary,
+so a problem that needs a human cannot be mistaken for a routine run summary.
 
 Test-only hook: WIKIAGENT_NOTIFY_CAPTURE_FILE - if set, the composed message is appended
 to that file (followed by a line containing only "---") and nothing is sent. Checked
@@ -31,7 +32,7 @@ Never throws — a notification failure must never fail the pipeline run itself.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VaultRoot,
-    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess', 'RunSummary', 'AuthAlert', 'Heartbeat')][string]$Event,
+    [Parameter(Mandatory = $true)][ValidateSet('Blocked', 'Failed', 'Success', 'NoChange', 'PartialSuccess', 'RunSummary', 'AuthAlert', 'SynthesisAlert', 'Heartbeat')][string]$Event,
     [string]$ExitCode,
     [string]$LogFile,
     [string]$Stats,
@@ -56,6 +57,9 @@ $now = (Get-Date).ToString('o')
 $message = switch ($Event) {
     'AuthAlert' {
         "[ACTION REQUIRED] WikiAgent: $Detail Time: $now"
+    }
+    'SynthesisAlert' {
+        "[ACTION REQUIRED] WikiAgent ${vaultName}: $Detail Time: $now"
     }
     'Heartbeat' {
         "WikiAgent weekly heartbeat. Time: $now`n$Detail"

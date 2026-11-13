@@ -27,6 +27,9 @@ jobs:
       - name: Synthesis runner suite
         run: pwsh -NoProfile -File agent/tests/run-claude-synthesis-test.ps1
 
+      - name: Source-page integrity, requeue and retry-cap suite
+        run: pwsh -NoProfile -File agent/tests/source-integrity-test.ps1
+
       - name: Health check and login alert suite
         run: pwsh -NoProfile -File agent/tests/health-check-test.ps1
 

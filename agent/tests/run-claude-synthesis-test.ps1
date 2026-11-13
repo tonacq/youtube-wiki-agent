@@ -353,6 +353,42 @@ Assert-True ($r9.reasonCode -eq 'SYNTHESIS_PARTIAL') "reasonCode is SYNTHESIS_PA
 Assert-True ((@($m9 | Where-Object { $_.synthesis_status -eq 'included' }).Count) -eq 3) "3 rows included"
 Assert-True ((@($m9 | Where-Object { $_.synthesis_status -eq 'partial' }).Count) -eq 2) "2 rows marked partial"
 
+# --- Scenario 9b: retry cap - a row dropped max_synthesis_attempts times is parked -----
+Write-Host "[9b] Retry cap: a source dropped in 2 runs (max_synthesis_attempts=2) is parked and no longer selected"
+$v9b = New-TestVault -RowCount 9
+$cfg9b = Get-Content -LiteralPath (Join-Path $v9b 'config/vault.json') -Raw | ConvertFrom-Json
+$cfg9b | Add-Member -NotePropertyName max_synthesis_attempts -NotePropertyValue 2 -Force
+$cfg9b | ConvertTo-Json | Out-File -LiteralPath (Join-Path $v9b 'config/vault.json') -Encoding utf8
+# Run 1: batch V001-V003; V003 dropped (attempt 1). (The mock lists every subset id as
+# processed, so V004/V005/V007/V008 are also included by run-qa.ps1.)
+$null = Invoke-Runner -VaultRoot $v9b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_PROCESSED_SUBSET = 'V001,V002,V004,V005,V007,V008' }
+$row3 = Get-Manifest -VaultRoot $v9b | Where-Object { $_.video_id -eq 'V003' } | Select-Object -First 1
+Assert-True ($row3.synthesis_status -eq 'partial' -and $row3.synthesis_attempts -eq '1') "run 1: V003 partial, synthesis_attempts 1 (got '$($row3.synthesis_status)', '$($row3.synthesis_attempts)')"
+# Run 2: batch V003 (partial first), V006, V009; only V006 included -> V003 attempt 2 -> parked.
+$null = Invoke-Runner -VaultRoot $v9b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_PROCESSED_SUBSET = 'V006' }
+$r9b = Get-RunResult -VaultRoot $v9b
+$m9b = Get-Manifest -VaultRoot $v9b
+$row3 = $m9b | Where-Object { $_.video_id -eq 'V003' } | Select-Object -First 1
+$row9 = $m9b | Where-Object { $_.video_id -eq 'V009' } | Select-Object -First 1
+Assert-True ($row3.synthesis_status -eq 'parked_synthesis' -and $row3.synthesis_attempts -eq '2') "run 2: V003 parked_synthesis, synthesis_attempts 2 (got '$($row3.synthesis_status)', '$($row3.synthesis_attempts)')"
+Assert-True ($row9.synthesis_status -eq 'partial' -and $row9.synthesis_attempts -eq '1') "run 2: V009 partial after its first attempt"
+$parked9b = @(Get-Prop $r9b 'parkedSources')
+Assert-True ($parked9b.Count -eq 1 -and (Get-Prop $parked9b[0] 'videoId') -eq 'V003') "run 2: synthesis-run-result.json parkedSources lists V003 only"
+# Run 3: V003 is no longer a candidate.
+$null = Invoke-Runner -VaultRoot $v9b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_PROCESSED_SUBSET = 'V009' }
+$sel9b = @(Get-Diagnostics -VaultRoot $v9b | Where-Object { $_.event -eq 'batch_selected' } | ForEach-Object { ,@($_.videoIds) })
+$last9b = if ($sel9b.Count -gt 0) { $sel9b[-1] } else { @() }
+Assert-True ($sel9b.Count -eq 3 -and ($last9b -join ',') -eq 'V009') "run 3: batch holds V009 only, not the parked V003 (got '$($last9b -join ',')')"
+Assert-True ((@(Get-Manifest -VaultRoot $v9b | Where-Object { $_.synthesis_status -eq 'included' }).Count) -eq 8) "8 rows included, V003 parked"
+
+# --- Scenario 9c: zero-progress failures do not count towards the cap -------------------
+Write-Host "[9c] Retry cap: a failed batch (zero progress, with wiki evidence) marks partial but does not count attempts"
+$v9c = New-TestVault -RowCount 3
+$exit9c = Invoke-Runner -VaultRoot $v9c -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_EXIT_CODE = '1'; WIKIAGENT_TEST_WRITE_RESULT = 'false'; WIKIAGENT_TEST_CREATE_WIKI_FILE = 'wiki/concepts/evidence.md' }
+$m9c = Get-Manifest -VaultRoot $v9c
+Assert-True ((@($m9c | Where-Object { $_.synthesis_status -eq 'partial' }).Count) -eq 3) "3 rows partial"
+Assert-True ((@($m9c | Where-Object { $_.synthesis_attempts -ne '' }).Count) -eq 0) "no synthesis_attempts recorded"
+
 # --- Scenario 10: usage-limit / continuity branch --------------------------------------------
 Write-Host "[10] Usage-limit hit then continuity resume"
 $v10 = New-TestVault -RowCount 3

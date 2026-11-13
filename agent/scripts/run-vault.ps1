@@ -251,6 +251,7 @@ $synthActualSynthesized = 0
 $synthTargetThisRun = 0
 $synthErrorSnippet = ''
 $synthDroppedSources = @()
+$synthParkedSources = @()
 $resolvedContinuity = $null
 $resolvedContinuitySource = $null
 if (Test-Path -LiteralPath $synthResultPath) {
@@ -265,6 +266,9 @@ if (Test-Path -LiteralPath $synthResultPath) {
         # SYNTHESIS_PARTIAL handling). Surfaced in the RunSummary notification so an
         # operator sees exactly which sources need attention, not just a count.
         if ($parsedSynth.PSObject.Properties['droppedSources']) { $synthDroppedSources = @($parsedSynth.droppedSources) }
+        # parkedSources: rows run-claude-synthesis.ps1 set to parked_synthesis this run
+        # (not included after max_synthesis_attempts). Sent as a separate alert below.
+        if ($parsedSynth.PSObject.Properties['parkedSources']) { $synthParkedSources = @($parsedSynth.parkedSources) }
         # run-claude-synthesis.ps1 runs after ingest-youtube.ps1 and resolves the same
         # override rule independently - its values win here as the more authoritative,
         # later read, and it is the only stage that resolves continuity at all.
@@ -299,6 +303,25 @@ if ($JobType -eq 'full' -and $synthReasonCode -eq 'AUTH_REQUIRED') {
     if ($synthResultIsThisRun) {
         $authAlertDetail = "Claude Code is logged out on the VM, so synthesis for $VaultName did not run. Ingestion and Drive backup still ran. Fix: on the VM run 'claude auth login', then confirm with 'claude auth status --json'."
         & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event AuthAlert -Detail $authAlertDetail
+    }
+}
+
+# Separate alert for sources parked this run: synthesis could not include them after
+# max_synthesis_attempts, so no batch will select them again until a human acts. As with
+# the auth alert, a stale result file from an earlier run is excluded by its timestamp.
+if ($JobType -eq 'full' -and $synthParkedSources.Count -gt 0) {
+    $parkedIsThisRun = $false
+    try {
+        $rawParkedTs = $parsedSynth.timestamp
+        $parkedTs = if ($rawParkedTs -is [datetime]) { $rawParkedTs } else { [datetime]::Parse([string]$rawParkedTs, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+        $parkedIsThisRun = ($parkedTs.ToUniversalTime() -ge $runStart.ToUniversalTime())
+    } catch {
+        Write-Warning "Could not read synthesis-run-result.json timestamp for the parked-sources alert: $($_.Exception.Message)"
+    }
+    if ($parkedIsThisRun) {
+        $parkedList = ($synthParkedSources | ForEach-Object { "$($_.videoId) ($($_.title))" }) -join '; '
+        $parkedDetail = "$($synthParkedSources.Count) source(s) could not be synthesised after repeated attempts and were set to parked_synthesis, so they no longer take batch slots: $parkedList. Likely cause: the source page does not hold that video's transcript. Check with: pwsh agent/scripts/requeue-shared-sources.ps1 -VaultRoot <vault>"
+        & (Join-Path $AgentRoot 'scripts/send-notification.ps1') -VaultRoot $VaultRoot -Event SynthesisAlert -Detail $parkedDetail
     }
 }
 

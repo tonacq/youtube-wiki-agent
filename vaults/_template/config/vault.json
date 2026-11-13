@@ -19,6 +19,7 @@
   "ingest_failure_ceiling": 12,
   "continuity": false,
   "claude_call_timeout_seconds": 1800,
+  "max_synthesis_attempts": 3,
   "claude_effort": "high",
   "claude_budget_usd": 10,
   "documents": {
