@@ -105,12 +105,15 @@ if ($result) {
 # genuinely-included row's own source page is byte-identical in structure to a
 # still-pending stub, differing only in a frontmatter value that this same script's
 # Sync-SourcePageFrontmatter function writes, downstream of this same result-file gate).
-# Only concepts/, tools/, workflows/, and synthesis/ contain content Claude itself
+# Only concepts/, tools/, workflows/, synthesis/ and digest/ contain content Claude itself
 # produces.
+#
+# digest/ holds the per-batch tiered entries Claude writes (Tier A, B and C), so a triaged
+# source with no full page still leaves evidence there.
 #
 # Only ever reached for 'full' job runs - lint-review jobs never invoke run-qa.ps1 at
 # all (see run-vault.ps1's JobType branch), so no internal mode check is needed here.
-$fallbackDirs = @('concepts', 'tools', 'workflows', 'synthesis') |
+$fallbackDirs = @('concepts', 'tools', 'workflows', 'synthesis', 'digest') |
     ForEach-Object { Join-Path $VaultRoot "wiki/$_" } |
     Where-Object { Test-Path -LiteralPath $_ }
 
