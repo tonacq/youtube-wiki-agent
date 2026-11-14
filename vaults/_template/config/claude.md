@@ -54,6 +54,10 @@ it, or in the digest entry.
 - **Every tier:** one entry in `wiki/digest/<batch>.md` with: the source wikilink, the tier,
   one sentence stating the lesson, one sentence on why it matters to the reader, the action to
   take (or "none"), and a confidence note when the source is a single informal opinion.
+  Keep each entry short: the lesson and the why-it-matters are each a single sentence of about
+  30 words at most, and a Tier B entry is no more than about 80 words in total. Put detail,
+  steps and prompts on a full page (Tier A) or leave them in the source page; never copy them
+  into the digest.
   Tier C needs only the source link, the tier and a few words saying why.
 - **Tier A only:** a full page under `wiki/concepts/`, `wiki/tools/` or `wiki/workflows/`,
   or an update to an existing one. Keep it as short as the knowledge allows. Prefer the
