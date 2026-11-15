@@ -22,7 +22,11 @@ evidence layer; a short weekly briefing is the product. Spend effort where the r
 5. Do not invent facts, steps, values, timestamps or links. If a source does not support a
    claim, leave it out or mark it uncertain.
 6. If a source page's transcript does not match its own video_id or title, do not process it.
-   List it in `not_processed` with the reason.
+   List it in `not_processed` with the reason. Exception: a short post whose title is only a
+   caption, promotion or hashtag text (for example "Check out <tool> ...") does not describe
+   the video, so a mismatch with that title is expected. Judge such a source by its transcript
+   alone and process it normally. Treat a mismatch as real only when the transcript is clearly
+   from a different video, such as a different speaker or an unrelated recording.
 7. Stay inside this vault. Never read or write another vault's `wiki/`, `working/` or
    `config/`, and never modify anything under `agent/`.
 
