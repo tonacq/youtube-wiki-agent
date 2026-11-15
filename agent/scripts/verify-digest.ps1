@@ -13,8 +13,9 @@ blindly. For every digest file (or only those written since -SinceUtc) this chec
     no-tier        an entry outside the "Not processed" section states no Tier A, B or C
     no-digest      the manifest has included rows for a batch but its digest file is missing
   WARNINGS (logged and written to the result file only):
-    long-entry     a Tier B entry is much longer than the contract's 80-word guide, or a
+    long-entry     a Tier B entry is much longer than the contract's word guide, or a
                    Tier C entry is longer than a few lines
+    link-budget    an entry holds more wikilinks than the contract's budget of five
 
 Two digest layouts are accepted, because Claude has produced both:
   * one-line bullets:   - [[page|Label]] - **Tier B**. Lesson: ...
@@ -39,7 +40,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$TierBWordWarn = 140   # contract guide is about 80 words; warn well past it
+$TierBWordWarn = 150   # contract guide is about 100 words (excluding resources); warn well past it
+$LinkBudget = 5        # contract: at most five wikilinks in one entry, the source page included
 $TierCWordWarn = 60
 
 try {
@@ -107,6 +109,7 @@ try {
         foreach ($e in $entries) {
             $entryCount++
             $links = [regex]::Matches($e.text, '\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]') | ForEach-Object { $_.Groups[1].Value.Trim() }
+            if (@($links).Count -gt $LinkBudget -and ($e.section -notmatch '(?i)not processed')) { Add-Issue 'warning' 'link-budget' $d.Name "entry for [[$(@($links)[0])]] has $(@($links).Count) wikilinks (budget: $LinkBudget)" }
             $first = $true
             foreach ($l in $links) {
                 if ($first) { [void]$linked.Add($l); $first = $false }

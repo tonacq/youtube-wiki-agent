@@ -36,5 +36,8 @@ jobs:
       - name: Digest verification suite
         run: pwsh -NoProfile -File agent/tests/verify-digest-test.ps1
 
+      - name: My thinking pages suite
+        run: pwsh -NoProfile -File agent/tests/my-thinking-test.ps1
+
       - name: Architecture conformance
         run: pwsh -NoProfile -File agent/tests/architecture-conformance-test.ps1 -RootPath .

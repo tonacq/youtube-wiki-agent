@@ -148,6 +148,17 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $v 'working/temp') | Out-Null
     $r = Run-Verify $v
     Assert-True ($r.Exit -eq 0 -and $r.Result.errorCount -eq 0) "bare vault: exit 0, no errors"
+
+    Write-Host "[9] more than five wikilinks in one entry: warning only"
+    $v = New-Vault -Pages @('src-a', 'src-b', 'src-c', 'concept-x', 'concept-y', 'concept-z', 'concept-w', 'concept-v') -Rows @((Row 'AAA' 'src-a' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] - **Tier B**. See [[concept-x]], [[concept-y]], [[concept-z]], [[concept-w]], [[concept-v]].`n"
+    $r = Run-Verify $v
+    Assert-True ($r.Result.errorCount -eq 0 -and ((Codes $r) -contains 'link-budget')) "link-budget warning, no error"
+    Assert-True (-not $r.Alert) "a link-budget warning sends no alert"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] - **Tier B**. See [[concept-x]].`n"
+    $r = Run-Verify $v
+    Assert-True (-not ((Codes $r) -contains 'link-budget')) "two links is within budget"
 }
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue

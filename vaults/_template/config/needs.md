@@ -4,6 +4,12 @@ Optional. Claude reads this file at the start of every batch, if it exists and i
 It decides what counts as high value for this channel. With no needs file, every source gets a
 full page. Edit it in plain language; no code changes are needed.
 
+## Purpose
+Default is a learning hub: every source gets a distilled entry, and none is skipped. Write the line
+`Purpose: briefing filter` here only if this vault should be allowed to skip low-value sources
+with a one-line log entry (Tier C).
+<!-- Purpose: learning hub -->
+
 ## Who the reader is and what they are trying to do
 <!-- one or two sentences -->
 

@@ -4,9 +4,10 @@ This file governs how Claude Code behaves when invoked headlessly inside this va
 `agent/scripts/run-claude-synthesis.ps1`. It is vault-local so each vault can carry its own
 scope and rules without touching shared agent code.
 
-**Purpose.** The reader will not watch the sources and may not read the wiki. The wiki is the
-evidence layer; a short weekly briefing is the product. Spend effort where the reader's needs
-(`config/needs.md`) are best served, and keep every claim traceable to its source.
+**Purpose.** This vault is a learning hub. The reader uses it to learn, remember and create,
+and a short weekly briefing sits on top of it. The reader will not watch every source, so every
+source must leave something worth knowing, written so the reader can think with it. Keep every
+claim traceable to its source. `config/needs.md` says what this reader cares about.
 
 ## Your job in this vault
 
@@ -42,10 +43,14 @@ This file decides what to do with a tier, never what is important. Importance co
   its instruction for sources where you are unsure. If it gives none, treat an unsure source as
   Tier A.
 
-The tiers:
-- **Tier A:** gets or improves a full page.
-- **Tier B:** gets a short digest entry only.
-- **Tier C:** gets one logged line only.
+The tiers describe depth, not whether a source is kept:
+- **Tier A:** gets or improves a full page. Use it when the source has enough substance for a
+  page: a method with steps, a tool setup, an argument with evidence, a case study. A short
+  clip whose whole content fits one entry is Tier B, however good it is.
+- **Tier B:** gets a distilled digest entry. This is the default and a real note, not a discard.
+- **Tier C:** gets one logged line only. Use it only if `config/needs.md` contains the line
+  `Purpose: briefing filter`. Without that line, Tier C is not available: a promotional post,
+  a skit or a source with nothing to learn still gets a short Tier B entry that says so.
 
 Update an existing page in preference to creating a near-duplicate.
 
@@ -56,13 +61,27 @@ it, or in the digest entry.
 ## Outputs per tier
 
 - **Every tier:** one entry in `wiki/digest/<batch>.md` with: the source wikilink, the tier,
-  one sentence stating the lesson, one sentence on why it matters to the reader, the action to
-  take (or "none"), and a confidence note when the source is a single informal opinion.
-  Keep each entry short: the lesson and the why-it-matters are each a single sentence of about
-  30 words at most, and a Tier B entry is no more than about 80 words in total. Put detail,
-  steps and prompts on a full page (Tier A) or leave them in the source page; never copy them
-  into the digest.
-  Tier C needs only the source link, the tier and a few words saying why.
+  and these lines:
+  - **Key statement:** the main point in one sentence of about 30 words at most, in your own
+    words and not the speaker's phrasing. Include a philosophical or mindset point when that is
+    the real content.
+  - **What it adds:** how it relates to at most two pages already in the wiki: confirms,
+    contradicts, extends, or is new, each with a link. If it contradicts a page, say so here and
+    record the disagreement on that page (see Tier A).
+  - **Resources named:** any tools, people, sites, books, links or figures the source names,
+    with the URL when the source gives one. Omit the line if there are none.
+  - **Why it matters:** one sentence tied to the reader's needs.
+  - **Action:** what to try, or "none".
+  - **Confidence:** a note when the source is a single informal opinion or its figures are
+    unsupported.
+  A Tier B entry is no more than about 100 words in total, not counting the resources list. Put
+  detail, steps and prompts on a full page (Tier A) or leave them in the source page; never copy
+  them into the digest.
+  Link budget: at most five wikilinks in one entry, the source page included. Link a page only
+  when the relationship is meaningful. Do not link a tool, sponsor or person just because the
+  source mentions it in passing.
+  Tier C (only where allowed above) needs only the source link, the tier and a few words saying
+  why.
 - **Tier A only:** a full page under `wiki/concepts/`, `wiki/tools/` or `wiki/workflows/`,
   or an update to an existing one. Keep it as short as the knowledge allows. Prefer the
   title a reader would search for.
@@ -70,9 +89,17 @@ it, or in the digest entry.
     prerequisites, warnings and a verification step, only where the source gives them.
   - Conceptual sources capture the argument, evidence, caveats and disagreement between
     sources. Preserve disagreement rather than forcing consensus.
+  - A new concept page that states a claim is titled as that claim, for example "Check an AI
+    answer against a second source before using it". A page about a thing is titled with the
+    thing's name.
+  - Every concept page you write or update ends with the line
+    `My thinking: [[my-thinking-<page-filename>]]`. A script creates that page; you never write
+    to it.
 - **Provenance on every page and entry:** an Obsidian wikilink to each supporting source
   page, `[[source-page-filename|Human-readable source title]]`. Pages end with `## References`.
   Add a link from each source page back to the pages it supports. Do not invent link targets.
+- Never create, edit or delete anything under `wiki/my-thinking/`. Those pages belong to the
+  reader; a script creates the empty ones.
 - Do not append to `wiki/synthesis/synthesis_register.md` and do not read it. The batch digest
   file replaces it.
 

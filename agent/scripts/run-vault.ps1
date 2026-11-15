@@ -175,6 +175,8 @@ try {
         # Deterministic check of what Claude wrote into wiki/digest (links, one entry per included
         # source, a tier on every entry). Never fails the run; sends its own SynthesisAlert on errors.
         if (-not $ReportOnly) {
+            # Empty 'My thinking' pages for the reader, one per concept page; never overwritten.
+            Invoke-Stage 'create-my-thinking-pages' (Join-Path $AgentRoot 'scripts/create-my-thinking-pages.ps1') @()
             Invoke-Stage 'verify-digest' (Join-Path $AgentRoot 'scripts/verify-digest.ps1') @{ SinceUtc = $runStart.ToUniversalTime().ToString('o') }
         }
 
