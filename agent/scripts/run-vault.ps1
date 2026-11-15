@@ -14,6 +14,7 @@ Stage order (matches the locked architecture spec, section 5):
   6. run-claude-synthesis.ps1 (unless -SkipClaude)
   7. run-qa.ps1              (deterministic reconciliation; always runs, even after a
                                 partial/interrupted run above)
+  7b. verify-digest.ps1      (checks the digest Claude wrote; alerts, never fails the run)
   8. backup-vault.ps1        (unless -SkipBackup)
   9. release lock, write run result
 
@@ -170,6 +171,12 @@ try {
         # It is the only stage permitted to update synthesis_status in the manifest, and
         # it must never downgrade an 'included' row back to 'pending' on re-run.
         Invoke-Stage 'run-qa' (Join-Path $AgentRoot 'scripts/run-qa.ps1') @()
+
+        # Deterministic check of what Claude wrote into wiki/digest (links, one entry per included
+        # source, a tier on every entry). Never fails the run; sends its own SynthesisAlert on errors.
+        if (-not $ReportOnly) {
+            Invoke-Stage 'verify-digest' (Join-Path $AgentRoot 'scripts/verify-digest.ps1') @{ SinceUtc = $runStart.ToUniversalTime().ToString('o') }
+        }
 
         if (-not $SkipBackup -and -not $ReportOnly) {
             Invoke-Stage 'backup-vault' (Join-Path $AgentRoot 'scripts/backup-vault.ps1') @()

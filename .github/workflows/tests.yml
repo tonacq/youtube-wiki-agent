@@ -33,5 +33,8 @@ jobs:
       - name: Health check and login alert suite
         run: pwsh -NoProfile -File agent/tests/health-check-test.ps1
 
+      - name: Digest verification suite
+        run: pwsh -NoProfile -File agent/tests/verify-digest-test.ps1
+
       - name: Architecture conformance
         run: pwsh -NoProfile -File agent/tests/architecture-conformance-test.ps1 -RootPath .
