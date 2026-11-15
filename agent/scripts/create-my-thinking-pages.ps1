@@ -1,24 +1,29 @@
 <#
 .SYNOPSIS
-Creates an empty "My thinking" page beside every concept page, and links to it from the
-concept page. Deterministic, idempotent, spends no Claude tokens.
+On request, creates a "My thinking" page for the named concept pages and links to it from each
+concept page. Deterministic, idempotent, spends no Claude tokens. Run by hand; the pipeline
+does not call it.
 
 .DESCRIPTION
 The wiki holds what the sources say; the reader's own thinking belongs on a separate page so
-the pipeline can never overwrite it. For each wiki/concepts/<name>.md this script:
+the pipeline can never overwrite it. Nothing is created unless concepts are named. For each
+name given with -Concept (a file name under wiki/concepts/, with or without .md) this script:
   1. creates wiki/my-thinking/my-thinking-<name>.md with four prompts, if it does not exist;
   2. appends the line  My thinking: [[my-thinking-<name>]]  to the concept page, if absent.
 An existing my-thinking page is never touched, so the reader's writing is safe. Re-running
-makes no change. Concept pages are changed only by that one appended line.
+makes no change. A name that matches no concept page is reported and skipped.
 
-Never throws and never fails the run.
+Never throws.
 
 .EXAMPLE
-pwsh agent/scripts/create-my-thinking-pages.ps1 -VaultRoot vaults/DWSIM
+pwsh agent/scripts/create-my-thinking-pages.ps1 -VaultRoot vaults/DWSIM -Concept check-sources,property-packages
 #>
 
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$VaultRoot)
+param(
+    [Parameter(Mandatory = $true)][string]$VaultRoot,
+    [string[]]$Concept
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -29,8 +34,12 @@ try {
     $mtDir = Join-Path $VaultRoot 'wiki/my-thinking'
     if (-not (Test-Path -LiteralPath $conceptsDir)) { Write-Host 'My thinking pages: no concepts folder, nothing to do.'; exit 0 }
 
+    $wanted = @($Concept | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Trim()) })
+    if ($wanted.Count -eq 0) { Write-Host 'My thinking pages: no concepts named, nothing created.'; exit 0 }
     $created = 0; $linked = 0
-    foreach ($f in Get-ChildItem -LiteralPath $conceptsDir -Filter '*.md' -File) {
+    foreach ($w in $wanted) {
+        $f = Get-Item -LiteralPath (Join-Path $conceptsDir "$w.md") -ErrorAction SilentlyContinue
+        if (-not $f) { Write-Warning "No concept page named '$w'; skipped."; continue }
         $name = [IO.Path]::GetFileNameWithoutExtension($f.Name)
         $pageName = "my-thinking-$name"
         $raw = Get-Content -LiteralPath $f.FullName -Raw -Encoding utf8

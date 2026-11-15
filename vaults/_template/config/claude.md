@@ -92,14 +92,11 @@ it, or in the digest entry.
   - A new concept page that states a claim is titled as that claim, for example "Check an AI
     answer against a second source before using it". A page about a thing is titled with the
     thing's name.
-  - Every concept page you write or update ends with the line
-    `My thinking: [[my-thinking-<page-filename>]]`. A script creates that page; you never write
-    to it.
 - **Provenance on every page and entry:** an Obsidian wikilink to each supporting source
   page, `[[source-page-filename|Human-readable source title]]`. Pages end with `## References`.
   Add a link from each source page back to the pages it supports. Do not invent link targets.
 - Never create, edit or delete anything under `wiki/my-thinking/`. Those pages belong to the
-  reader; a script creates the empty ones.
+  reader, who asks for them one concept at a time. Do not link to a my-thinking page.
 - Do not append to `wiki/synthesis/synthesis_register.md` and do not read it. The batch digest
   file replaces it.
 
