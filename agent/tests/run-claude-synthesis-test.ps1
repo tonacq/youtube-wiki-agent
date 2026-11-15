@@ -77,8 +77,11 @@ function Clear-TestEnv {
     foreach ($v in $testEnvVars) { Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue }
 }
 
+# Default claude_call_timeout_seconds is generous: the mock Claude is a fresh pwsh process, and on a
+# slow or loaded machine its start-up alone can pass a few seconds, which made scenarios that are
+# not about timeouts flake with SYNTHESIS_TIMEOUT. The timeout scenarios (4, 4b, 17b) pass 10 explicitly and the mock sleeps 30, so a slow start-up can neither fire the timeout before the mock has written its evidence nor outlast it.
 function New-TestVault {
-    param([int]$RowCount = 10, [int]$TimeoutSeconds = 3)
+    param([int]$RowCount = 10, [int]$TimeoutSeconds = 30)
     $vaultRoot = Join-Path $script:tempRoot "vault_$([guid]::NewGuid().ToString('N').Substring(0,8))"
     foreach ($d in @('config', 'config/prompts', 'working', 'working/temp', 'wiki/sources', 'wiki/concepts', 'wiki/tools', 'wiki/workflows', 'wiki/synthesis')) {
         New-Item -ItemType Directory -Force -Path (Join-Path $vaultRoot $d) | Out-Null
@@ -113,7 +116,7 @@ function New-TestVault {
 # exact contamination risk the mutation-evidence capture must be ordered before, not
 # after, run-qa.ps1.
 function New-TestVaultWithUnsyncedHistoricalRow {
-    param([int]$RowCount = 3, [int]$TimeoutSeconds = 3)
+    param([int]$RowCount = 3, [int]$TimeoutSeconds = 30)
     $vaultRoot = New-TestVault -RowCount $RowCount -TimeoutSeconds $TimeoutSeconds
 
     $historicalSourceFile = Join-Path $vaultRoot 'wiki/sources/historical-v000.md'
@@ -272,8 +275,8 @@ Assert-True ((Get-Prop $outcome3b 'mutationEvidenceCount') -eq 1) "diagnostics r
 
 # --- Scenario 4: Claude timeout, no evidence of synthesis work (killed before any work) --
 Write-Host "[4] Claude timeout with NO evidence of synthesis work (timeout-before-work)"
-$v4 = New-TestVault -RowCount 3 -TimeoutSeconds 3
-$exit4 = Invoke-Runner -VaultRoot $v4 -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '8' }
+$v4 = New-TestVault -RowCount 3 -TimeoutSeconds 10
+$exit4 = Invoke-Runner -VaultRoot $v4 -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '30' }
 $r4 = Get-RunResult -VaultRoot $v4
 $m4 = Get-Manifest -VaultRoot $v4
 $diag4 = Get-Diagnostics -VaultRoot $v4
@@ -287,8 +290,8 @@ Assert-True ((Get-Prop $outcome4 'partialMarked') -eq $false) "diagnostics recor
 
 # --- Scenario 4b: Claude timeout, WITH evidence of synthesis work before the hang -------
 Write-Host "[4b] Claude timeout WITH evidence of synthesis work before the hang"
-$v4b = New-TestVault -RowCount 3 -TimeoutSeconds 3
-$exit4b = Invoke-Runner -VaultRoot $v4b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '8'; WIKIAGENT_TEST_CREATE_WIKI_FILE = 'wiki/tools/evidence-before-hang.md' }
+$v4b = New-TestVault -RowCount 3 -TimeoutSeconds 10
+$exit4b = Invoke-Runner -VaultRoot $v4b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '30'; WIKIAGENT_TEST_CREATE_WIKI_FILE = 'wiki/tools/evidence-before-hang.md' }
 $r4b = Get-RunResult -VaultRoot $v4b
 $m4b = Get-Manifest -VaultRoot $v4b
 $diag4b = Get-Diagnostics -VaultRoot $v4b
@@ -527,8 +530,8 @@ Assert-True ((Get-Prop $outcome17 'mutationEvidenceCount') -eq 0) "diagnostics r
 
 # --- Scenario 17b: same ordering-fix regression, timeout path --------------------------
 Write-Host "[17b] Timeout with zero Claude work stays 'pending' even when run-qa.ps1 writes unrelated wiki/source frontmatter"
-$v17b = New-TestVaultWithUnsyncedHistoricalRow -RowCount 3 -TimeoutSeconds 3
-$exit17b = Invoke-Runner -VaultRoot $v17b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '8' }
+$v17b = New-TestVaultWithUnsyncedHistoricalRow -RowCount 3 -TimeoutSeconds 10
+$exit17b = Invoke-Runner -VaultRoot $v17b -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS = '30' }
 $r17b = Get-RunResult -VaultRoot $v17b
 $m17b = Get-Manifest -VaultRoot $v17b
 $diag17b = Get-Diagnostics -VaultRoot $v17b
