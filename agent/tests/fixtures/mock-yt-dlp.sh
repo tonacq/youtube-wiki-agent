@@ -14,9 +14,10 @@ for a in "$@"; do
     exit 0
   fi
 done
-out=""; url=""; prev=""
+out=""; url=""; prev=""; langs=""
 for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
+  [ "$prev" = "--sub-langs" ] && langs="$a"
   case "$a" in https://www.youtube.com/watch?v=*) url="$a";; esac
   prev="$a"
 done
@@ -24,5 +25,8 @@ id="${url#https://www.youtube.com/watch?v=}"
 case ",$WIKIAGENT_TEST_YTDLP_FAIL_IDS," in *",$id,"*) echo "ERROR: mock failure for $id"; exit 1;; esac
 dir="$(dirname "$out")"
 mkdir -p "$dir"
-printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nTranscript of video %s\n' "$id" > "$dir/$id.en-orig.vtt"
+# $WIKIAGENT_TEST_YTDLP_ONLY_EN_IDS (comma-separated): these videos have no en-orig track, only en.
+track="en-orig"
+case ",$WIKIAGENT_TEST_YTDLP_ONLY_EN_IDS," in *",$id,"*) track="en";; esac
+case ",$langs," in *",$track,"*|",,") printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nTranscript of video %s\n' "$id" > "$dir/$id.$track.vtt";; esac
 exit 0

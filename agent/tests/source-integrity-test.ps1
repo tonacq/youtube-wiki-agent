@@ -36,7 +36,7 @@ function Assert-True {
     else { $script:failCount++; Write-Host "  FAIL: $Message" -ForegroundColor Red }
 }
 
-$testEnvVars = @('WIKIAGENT_TEST_YTDLP_CHANNEL', 'WIKIAGENT_TEST_YTDLP_FAIL_IDS', 'WIKIAGENT_TEST_YTDLP_LOG',
+$testEnvVars = @('WIKIAGENT_TEST_YTDLP_CHANNEL', 'WIKIAGENT_TEST_YTDLP_FAIL_IDS', 'WIKIAGENT_TEST_YTDLP_ONLY_EN_IDS', 'WIKIAGENT_TEST_YTDLP_LOG',
     'WIKIAGENT_MOCK_CLAUDE_SCRIPT', 'WIKIAGENT_NOTIFY_CAPTURE_FILE', 'WIKIAGENT_TEST_PROCESSED_SUBSET')
 function Clear-TestEnv { foreach ($v in $testEnvVars) { Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue } }
 
@@ -205,6 +205,28 @@ $ids = @(Get-Manifest $v7b | ForEach-Object { $_.video_id })
 Assert-True ($ingest.reasonCode -eq 'TARGET_MET') "reasonCode TARGET_MET (got $($ingest.reasonCode))"
 Assert-True (($ids | Sort-Object) -join ',' -eq 'BLK,NEW1') "manifest holds BLK and NEW1 once each (got $($ids -join ','))"
 Assert-True ((Get-Row $v7b 'BLK').transcript_status -eq 'downloaded' -and (Get-Row $v7b 'NEW1').transcript_status -eq 'downloaded') "both downloaded; NEW2 not reached (target 1 met by NEW1)"
+
+Write-Host "[7c] ingest-youtube: one caption track per request, paced; the second track only when the first is missing"
+$v7c = New-Vault -Extra @{ batch_size = 2; batch_iterations = 1; yt_sleep_subtitles_seconds = 7; yt_sleep_requests_seconds = 2 }
+$channel = Join-Path $v7c 'channel.txt'
+"NORM|Normal video`nENONLY|English only video" | Out-File -LiteralPath $channel -Encoding utf8
+Set-Manifest $v7c @()
+$ytLog = Join-Path $v7c 'ytdlp.log'
+Clear-TestEnv
+$env:WIKIAGENT_TEST_YTDLP_CHANNEL = $channel
+$env:WIKIAGENT_TEST_YTDLP_LOG = $ytLog
+$env:WIKIAGENT_TEST_YTDLP_ONLY_EN_IDS = 'ENONLY'
+$r = Invoke-Script 'ingest-youtube.ps1' @('-VaultRoot', $v7c)
+Clear-TestEnv
+$calls = @(Get-Content -LiteralPath $ytLog | Where-Object { $_ -match 'watch\?v=' })
+$normCalls = @($calls | Where-Object { $_ -match 'watch\?v=NORM' })
+$enCalls = @($calls | Where-Object { $_ -match 'watch\?v=ENONLY' })
+Assert-True ($r.Exit -eq 0) "exit 0"
+Assert-True ($normCalls.Count -eq 1 -and $normCalls[0] -match '--sub-langs en-orig(\s|$)' -and $normCalls[0] -notmatch 'en-orig,en') "a normal video costs exactly one request, for en-orig only"
+Assert-True ($enCalls.Count -eq 2 -and $enCalls[0] -match '--sub-langs en-orig(\s|$)' -and $enCalls[1] -match '--sub-langs en(\s|$)') "an English-only video falls back to a second request for en"
+Assert-True (($calls | Where-Object { $_ -match '--sleep-subtitles 7' -and $_ -match '--sleep-requests 2' }).Count -eq $calls.Count) "every request carries the configured pacing flags"
+Assert-True ((Get-Row $v7c 'NORM').transcript_status -eq 'downloaded' -and (Get-Row $v7c 'ENONLY').transcript_status -eq 'downloaded') "both videos downloaded"
+Assert-True (Test-Path -LiteralPath (Join-Path $v7c 'working/temp/raw/ENONLY.en.vtt')) "the en track was kept for the English-only video"
 
 # --- [8] run-vault: parked sources raise a separate alert ------------------------------
 Write-Host "[8] run-vault: a source parked by the retry cap sends a separate SynthesisAlert before the RunSummary"

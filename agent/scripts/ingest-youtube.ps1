@@ -52,6 +52,17 @@ New-Item -ItemType Directory -Force -Path $rawDir, $cleanDir | Out-Null
 $ytdlp = if ($config.yt_dlp_path) { $config.yt_dlp_path } else { 'yt-dlp' }
 $captionLangs = if ($config.caption_languages) { $config.caption_languages } else { @('en-orig', 'en') }
 $maxAttempts = if ($config.max_transcript_attempts) { [int]$config.max_transcript_attempts } else { 3 }
+# Pacing: YouTube answers bursts of subtitle requests with HTTP 429 (16 Nov 2026: 12 in a row ended a
+# run with INGEST_FAILURE_CEILING). yt-dlp waits this many seconds before each subtitle download and
+# between requests. Override per vault with yt_sleep_subtitles_seconds / yt_sleep_requests_seconds.
+# A missing key must read as the default (strict mode throws on a missing property); 0 turns a wait off.
+function Get-ConfigSeconds([string]$Name, [int]$Default) {
+    $p = $config.PSObject.Properties[$Name]
+    if ($p -and $null -ne $p.Value -and "$($p.Value)" -ne '') { return [int]$p.Value }
+    return $Default
+}
+$sleepSubtitles = Get-ConfigSeconds 'yt_sleep_subtitles_seconds' 5
+$sleepRequests  = Get-ConfigSeconds 'yt_sleep_requests_seconds' 1
 
 $ytArgs = @('--flat-playlist', '--print', '%(id)s|%(title)s', $config.channel_url)
 if ($config.proxy)  { $ytArgs = @('--proxy', $config.proxy) + $ytArgs }
@@ -151,24 +162,26 @@ function Invoke-CaptionDownload {
     $dlOutput = @()
     $attemptsSoFar = if ($existing -and $existing.PSObject.Properties['transcript_attempts']) { [int]$existing.transcript_attempts } else { 0 }
 
-    $dlArgs = @(
+    $baseArgs = @(
         '--write-auto-subs', '--write-subs',
-        '--sub-langs', ($captionLangs -join ','),
         '--sub-format', 'vtt', '--skip-download', '--write-info-json',
         '-o', (Join-Path $rawDir '%(id)s.%(ext)s')
     )
-    if ($config.proxy)       { $dlArgs = @('--proxy', $config.proxy) + $dlArgs }
-    if ($config.cookie_file) { $dlArgs = @('--cookies', $config.cookie_file) + $dlArgs }
-    $dlArgs += "https://www.youtube.com/watch?v=$id"
+    if ($sleepSubtitles -gt 0) { $baseArgs += @('--sleep-subtitles', "$sleepSubtitles") }
+    if ($sleepRequests -gt 0)  { $baseArgs += @('--sleep-requests', "$sleepRequests") }
+    if ($config.proxy)       { $baseArgs = @('--proxy', $config.proxy) + $baseArgs }
+    if ($config.cookie_file) { $baseArgs = @('--cookies', $config.cookie_file) + $baseArgs }
 
     $status = 'downloaded'
     try {
-        $dlOutput = & $ytdlp @dlArgs 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "yt-dlp exited with code $LASTEXITCODE for ${id}: $($dlOutput -join ' ')" }
-
-        # Canonical caption selection: prefer en-orig, else en; delete the other variant.
+        # One caption track per request, in preference order (en-orig, then en): the second track is
+        # fetched only when the first does not exist, so a normal video costs one subtitle request,
+        # not two. The preferred track is kept; any other variant is deleted.
         $preferred = $null
         foreach ($lang in $captionLangs) {
+            $dlArgs = $baseArgs + @('--sub-langs', $lang, "https://www.youtube.com/watch?v=$id")
+            $dlOutput = & $ytdlp @dlArgs 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "yt-dlp exited with code $LASTEXITCODE for ${id}: $($dlOutput -join ' ')" }
             $candidate = Join-Path $rawDir "$id.$lang.vtt"
             if (Test-Path -LiteralPath $candidate) { $preferred = $candidate; break }
         }
