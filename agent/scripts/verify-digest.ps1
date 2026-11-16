@@ -17,9 +17,10 @@ blindly. For every digest file (or only those written since -SinceUtc) this chec
                    Tier C entry is longer than a few lines
     link-budget    an entry holds more wikilinks than the contract's budget of five
 
-Two digest layouts are accepted, because Claude has produced both:
+Several digest layouts are accepted, because Claude has produced all of them:
   * one-line bullets:   - [[page|Label]] - **Tier B**. Lesson: ...
-  * heading blocks:     ## [[page|Label]]  followed by "- **Tier:** B" and field lines
+  * heading blocks:     ## [[page|Label]]  or  ### [[page|Label]]  (any heading level 2 to 6)
+                        followed by "- **Tier:** B" or "- Tier: B" and field lines
 An entry may also take its tier from a "## Tier B" style section heading above it.
 Entries under a "## Not processed" heading are exempt from the tier rule.
 
@@ -91,10 +92,10 @@ try {
         $entries = [System.Collections.Generic.List[object]]::new()
         $cur = $null
         foreach ($line in $lines) {
-            if ($line -match '^##\s+\[\[') {
+            if ($line -match '^#{2,6}\s+\[\[') {
                 if ($cur) { $entries.Add($cur) }
                 $cur = [pscustomobject]@{ section = $section; text = $line }
-            } elseif ($line -match '^##\s+(.+?)\s*$') {
+            } elseif ($line -match '^#{2,6}\s+(.+?)\s*$') {
                 if ($cur) { $entries.Add($cur); $cur = $null }
                 $section = $Matches[1]
             } elseif ($line -match '^\s*-\s+\[\[') {

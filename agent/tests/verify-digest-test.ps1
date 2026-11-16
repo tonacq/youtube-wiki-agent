@@ -159,6 +159,20 @@ try {
     Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] - **Tier B**. See [[concept-x]].`n"
     $r = Run-Verify $v
     Assert-True (-not ((Codes $r) -contains 'link-budget')) "two links is within budget"
+
+    Write-Host "[10] level-3 heading entries with unbolded fields (the layout Claude produced on 16 Nov)"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "# Synthesis digest`n`n## Tier B`n`n### [[src-a|Alpha]]`n- Tier: B`n- Lesson: one sentence.`n- Why it matters: short.`n`n## Tier C`n`n- [[src-b|Beta]]: C, promo.`n"
+    $r = Run-Verify $v
+    Assert-True ($r.Result.errorCount -eq 0 -and $r.Result.entriesChecked -eq 2) "no errors, 2 entries (errors $($r.Result.errorCount), entries $($r.Result.entriesChecked))"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n### [[src-a|Alpha]]`n- Tier: B`n- Lesson: one sentence.`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'missing-entry' -and ($r.Result.issues | Where-Object code -eq 'missing-entry').detail -match 'BBB') "a heading-layout digest still flags a genuinely missing entry"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Entries`n`n### [[src-a|Alpha]]`n- Lesson: no tier line here.`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'no-tier') "a heading-layout entry with no tier is still flagged"
 }
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue
