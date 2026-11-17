@@ -276,7 +276,8 @@ if ($LintReview) {
     @"
 # Scheduled lint-review
 
-Follow the "Scheduled lint-review runs" section of config/claude.md exactly.
+Follow the "Scheduled lint-review runs" section of $claudeMd exactly.
+(That file is inside your working directory, the vault root. There is no claude.md outside the vault.)
 This is report-only: analyze the vault, write reports/lint_report_$(Get-Date -Format 'yyyy-MM-dd').md,
 make no other changes.
 "@ | Out-File -LiteralPath $lintPrompt -Encoding utf8
@@ -609,7 +610,7 @@ try {
         @"
 # Synthesis batch: $batchId
 
-Follow config/claude.md. Process these pending source pages:
+Follow $claudeMd (inside your working directory, the vault root; there is no claude.md outside the vault). Process these pending source pages:
 
 $sourceList
 
