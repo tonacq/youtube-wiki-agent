@@ -173,6 +173,16 @@ try {
     Set-Digest $v 'b1' "## Entries`n`n### [[src-a|Alpha]]`n- Lesson: no tier line here.`n"
     $r = Run-Verify $v
     Assert-True ((Codes $r) -contains 'no-tier') "a heading-layout entry with no tier is still flagged"
+
+    Write-Host "[11] merged entry: every source linked on the entry's first line is covered"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] and [[src-b|Beta]] (the demo clip) - **Tier B**. Lesson: one sentence for both.`n"
+    $r = Run-Verify $v
+    Assert-True (-not ((Codes $r) -contains 'missing-entry')) "a merged entry covers both sources (codes: $((Codes $r) -join ','))"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] - **Tier B**. Lesson: one sentence. See also [[src-b]].`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'missing-entry') "a source linked only in the body of another entry is still flagged"
 }
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue

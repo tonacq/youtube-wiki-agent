@@ -83,6 +83,14 @@ if ($invocationCount -le $limitHitFirstN) {
     exit 0
 }
 
+# WIKIAGENT_TEST_NO_RESULT_FIRST_N: the first N invocations exit 0 and write no result file
+# (the intermittent real-Claude stall); later invocations behave normally.
+$noResultFirstN = if ($env:WIKIAGENT_TEST_NO_RESULT_FIRST_N) { [int]$env:WIKIAGENT_TEST_NO_RESULT_FIRST_N } else { 0 }
+if ($invocationCount -le $noResultFirstN) {
+    Write-Output "Mock: could not finish, no result written."
+    exit 0
+}
+
 if ($env:WIKIAGENT_TEST_CREATE_WIKI_FILE) {
     $wikiFilePath = Join-Path (Get-Location).Path $env:WIKIAGENT_TEST_CREATE_WIKI_FILE
     New-Item -ItemType Directory -Force -Path (Split-Path -Path $wikiFilePath -Parent) | Out-Null

@@ -540,6 +540,7 @@ $reasonCode = $null
 $errorSnippet = ''
 $sleptUntil = ''
 $hadPartialThisRun = $false
+$zeroProgressRetries = 0   # one retry of a batch that wrote nothing (RESULT_MISSING); reset on success
 # Ordered dict keyed by video_id, holding only sources still un-recovered as of "right
 # now" in this run - a later batch that successfully includes a straggler removes it
 # here, so the final droppedSources reported to run-vault.ps1/Telegram reflects the
@@ -611,6 +612,8 @@ try {
 # Synthesis batch: $batchId
 
 Follow $claudeMd (inside your working directory, the vault root; there is no claude.md outside the vault). Process these pending source pages:
+
+Work only with the file Read, Write and Edit tools. Do not write or run scripts (python, bash, node): shell commands beyond simple reads are refused in this unattended run and the batch is lost.
 
 $sourceList
 
@@ -814,6 +817,16 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
                 $batchClassification = 'QA_ZERO_PROGRESS'
                 $errorSnippet = "synthesis-result.json was valid and listed $($processedIdsFromResult.Count) processed id(s), but run-qa.ps1 reconciliation produced no new included rows."
             }
+            # One retry for an intermittent no-result batch (Claude sometimes stalls on a
+            # refused tool call, e.g. trying to run a script in headless mode). Only when
+            # nothing was written under wiki/ (so the same sources are still plain pending)
+            # and only once per batch; a second failure ends the run as before.
+            if ($batchClassification -eq 'SYNTHESIS_RESULT_MISSING' -and $mutatedFiles.Count -eq 0 -and $zeroProgressRetries -lt 1) {
+                $zeroProgressRetries++
+                Write-Diag -Event 'batch_retry' -Fields @{ batchId = $batchId; iteration = $iterationNumber; classification = $batchClassification; retry = $zeroProgressRetries }
+                Write-Warning "${batchClassification}: batch $batchId wrote nothing; retrying the same sources once."
+                continue
+            }
             $reasonCode = $batchClassification
 
             # Review round 2, item 1: "a Claude invocation was attempted" (true for every
@@ -884,6 +897,7 @@ Do not edit working/manifest.csv. run-qa.ps1 will reconcile it from your result 
         }
 
         $batchesCompleted++
+        $zeroProgressRetries = 0
         Write-Diag -Event 'batch_counter_incremented' -Fields @{ batchId = $batchId; batchesCompleted = $batchesCompleted; batchIterations = $batchIterations }
         Write-Diag -Event 'iteration_completed' -Fields @{ batchId = $batchId; iteration = $iterationNumber; outcome = 'completed'; batchesCompleted = $batchesCompleted }
 

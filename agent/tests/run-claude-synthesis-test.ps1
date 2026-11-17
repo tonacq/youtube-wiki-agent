@@ -71,7 +71,7 @@ $testEnvVars = @(
     'WIKIAGENT_TEST_CLAUDE_TIMEOUT_SECONDS', 'WIKIAGENT_TEST_CLAUDE_OUTPUT', 'WIKIAGENT_TEST_CLAUDE_EXIT_CODE',
     'WIKIAGENT_TEST_WRITE_RESULT', 'WIKIAGENT_TEST_RESULT_CONTENT', 'WIKIAGENT_TEST_PROCESSED_SUBSET',
     'WIKIAGENT_TEST_RESULT_BATCH_OVERRIDE', 'WIKIAGENT_TEST_LIMIT_HIT_FIRST_N', 'WIKIAGENT_TEST_THROW_AFTER_BATCH',
-    'WIKIAGENT_TEST_CREATE_WIKI_FILE'
+    'WIKIAGENT_TEST_CREATE_WIKI_FILE', 'WIKIAGENT_TEST_NO_RESULT_FIRST_N'
 )
 function Clear-TestEnv {
     foreach ($v in $testEnvVars) { Remove-Item -Path "env:$v" -ErrorAction SilentlyContinue }
@@ -321,6 +321,26 @@ $r5b = Get-RunResult -VaultRoot $v5b
 $m5b = Get-Manifest -VaultRoot $v5b
 Assert-True ($r5b.reasonCode -eq 'SYNTHESIS_RESULT_MISSING') "reasonCode is SYNTHESIS_RESULT_MISSING (got '$($r5b.reasonCode)')"
 Assert-True ((@($m5b | Where-Object { $_.synthesis_status -eq 'partial' }).Count) -eq 3) "all 3 sent rows marked 'partial' - matches the real incident's need for a durable attempted-but-incomplete signal"
+
+# --- Scenario 5c: one stalled batch is retried once, then the run carries on ---------------
+Write-Host "[5c] Intermittent no-result batch: retried once, then succeeds"
+$v5c = New-TestVault -RowCount 3
+$exit5c = Invoke-Runner -VaultRoot $v5c -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_NO_RESULT_FIRST_N = '1' }
+$r5c = Get-RunResult -VaultRoot $v5c
+$m5c = Get-Manifest -VaultRoot $v5c
+$diag5c = Get-Diagnostics -VaultRoot $v5c
+Assert-True ((@($diag5c | Where-Object { $_.event -eq 'batch_retry' }).Count) -eq 1) "exactly one batch_retry event"
+Assert-True ((@($m5c | Where-Object { $_.synthesis_status -eq 'included' }).Count) -eq 3) "all 3 rows included after the retry"
+Assert-True ($r5c.reasonCode -ne 'SYNTHESIS_RESULT_MISSING') "run does not end as SYNTHESIS_RESULT_MISSING (got '$($r5c.reasonCode)')"
+
+Write-Host "[5d] Two stalled attempts in a row: the retry is not repeated, the run ends"
+$v5d = New-TestVault -RowCount 3
+$exit5d = Invoke-Runner -VaultRoot $v5d -BatchSizeOverride '3' -BatchIterationsOverride '1' -Env @{ WIKIAGENT_TEST_WRITE_RESULT = 'false' }
+$r5d = Get-RunResult -VaultRoot $v5d
+$diag5d = Get-Diagnostics -VaultRoot $v5d
+Assert-True ((@($diag5d | Where-Object { $_.event -eq 'batch_retry' }).Count) -eq 1) "only one retry was made"
+Assert-True ((@($diag5d | Where-Object { $_.event -eq 'claude_job_started' }).Count) -eq 2) "Claude was invoked exactly twice"
+Assert-True ($r5d.reasonCode -eq 'SYNTHESIS_RESULT_MISSING') "run ends as SYNTHESIS_RESULT_MISSING (got '$($r5d.reasonCode)')"
 
 # --- Scenario 6: malformed synthesis-result.json -----------------------------------------
 Write-Host "[6] Malformed synthesis-result.json"

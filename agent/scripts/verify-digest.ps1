@@ -111,9 +111,16 @@ try {
             $entryCount++
             $links = [regex]::Matches($e.text, '\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]') | ForEach-Object { $_.Groups[1].Value.Trim() }
             if (@($links).Count -gt $LinkBudget -and ($e.section -notmatch '(?i)not processed')) { Add-Issue 'warning' 'link-budget' $d.Name "entry for [[$(@($links)[0])]] has $(@($links).Count) wikilinks (budget: $LinkBudget)" }
+            # A merged entry names several sources on its first line ("[[A]] and [[B]] - Tier B");
+            # every source page linked in that head counts as covered. Links after it or further down
+            # (What it adds, related pages) do not.
+            # The head ends at the first dash separator, bold marker or the word Tier.
+            $firstLine = (($e.text -split "`n")[0] -split "\s[$([char]0x2014)$([char]0x2013)-]\s|\*\*|tier", 2)[0]
+            $headLinks = @([regex]::Matches($firstLine, '\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]') | ForEach-Object { $_.Groups[1].Value.Trim() })
             $first = $true
             foreach ($l in $links) {
                 if ($first) { [void]$linked.Add($l); $first = $false }
+                if ($headLinks -contains $l) { [void]$linked.Add($l) }
                 if (-not $pageNames.Contains($l)) { Add-Issue 'error' 'broken-link' $d.Name "[[${l}]] does not exist under wiki/" }
             }
             if ($e.section -match '(?i)not processed') { continue }
