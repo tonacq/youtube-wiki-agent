@@ -92,6 +92,33 @@ Assert-True ((Get-Content -LiteralPath $b.source_file -Raw) -match 'Transcript B
 Assert-True ((Get-Content -LiteralPath $b.source_file -Raw) -notmatch 'Transcript AAA') "BBB's page does not hold AAA's transcript"
 Assert-True ($a.ingest_status -eq 'ingested' -and $b.ingest_status -eq 'ingested') "both rows ingested"
 
+# --- [1b] Description links from info.json reach the page ------------------------------
+Write-Host "[1b] create-source-pages: info.json description links are copied; no info.json or no link -> no section"
+$v1b = New-Vault
+$c1b = Join-Path $v1b 'working/temp/clean_transcripts'
+$raw1b = Join-Path $v1b 'working/temp/raw'
+foreach ($id in 'LNK', 'NOI', 'NOL') { "Transcript $id" | Out-File -LiteralPath (Join-Path $c1b "$id.en-orig.txt") -Encoding utf8 }
+(@{ description = "Intro line without a link`nMy FREE resources: https://example.com/free?x=1&y=2`nplain text`nTool: https://example.com/tool`n" } | ConvertTo-Json) | Out-File -LiteralPath (Join-Path $raw1b 'LNK.info.json') -Encoding utf8
+(@{ description = "No links in this description at all" } | ConvertTo-Json) | Out-File -LiteralPath (Join-Path $raw1b 'NOL.info.json') -Encoding utf8
+Set-Manifest $v1b @(
+    "LNK,With links,youtube,downloaded,1,clean_ready,$c1b/LNK.en-orig.txt,,,,pending,pending,,,,,",
+    "NOI,No info,youtube,downloaded,1,clean_ready,$c1b/NOI.en-orig.txt,,,,pending,pending,,,,,",
+    "NOL,No link,youtube,downloaded,1,clean_ready,$c1b/NOL.en-orig.txt,,,,pending,pending,,,,,"
+)
+$r = Invoke-Script 'create-source-pages.ps1' @('-VaultRoot', $v1b)
+$pl = Get-Content -LiteralPath (Get-Row $v1b 'LNK').source_file -Raw
+$pn = Get-Content -LiteralPath (Get-Row $v1b 'NOI').source_file -Raw
+$po = Get-Content -LiteralPath (Get-Row $v1b 'NOL').source_file -Raw
+Assert-True ($r.Exit -eq 0) "exit 0"
+Assert-True ($pl -match '## Video description links') "page with links has the section"
+Assert-True ($pl -match '- My FREE resources: https://example\.com/free\?x=1&y=2') "link line kept whole, label and query string intact"
+Assert-True ($pl -match '- Tool: https://example\.com/tool') "second link line kept"
+Assert-True ($pl -notmatch 'Intro line without a link' -and $pl -notmatch 'plain text') "lines without a link are not copied"
+Assert-True ($pl.IndexOf('## Video description links') -lt $pl.IndexOf('## Transcript / content')) "section sits before the transcript"
+Assert-True ($pl -match 'Transcript LNK') "transcript still present"
+Assert-True ($pn -notmatch 'Video description links' -and $pn -match 'Transcript NOI') "no info.json -> no section, page still created"
+Assert-True ($po -notmatch 'Video description links' -and $po -match 'Transcript NOL') "description without a link -> no section"
+
 # --- [2] Missing clean transcript: no page, not ingested -------------------------------
 Write-Host "[2] create-source-pages: clean transcript missing -> no page, row not ingested, clean_status cleared"
 $v2 = New-Vault

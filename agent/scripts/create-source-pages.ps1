@@ -34,6 +34,25 @@ $manifestPath = Join-Path $VaultRoot 'working/manifest.csv'
 $sourcesDir   = Join-Path $VaultRoot 'wiki/sources'
 New-Item -ItemType Directory -Force -Path $sourcesDir | Out-Null
 
+# Lines of the video description that carry a link, so the resources a creator names (tools,
+# templates, repos, communities) keep their URLs through synthesis. Reads the info.json that
+# ingest-youtube.ps1 already writes; returns '' when there is none or no link. Deterministic,
+# no Claude tokens. Capped so a link-farm description cannot bloat the page.
+function Get-DescriptionLinkBlock {
+    param([string]$VaultRoot, [string]$VideoId)
+    $infoPath = Join-Path $VaultRoot "working/temp/raw/$VideoId.info.json"
+    if (-not (Test-Path -LiteralPath $infoPath)) { return '' }
+    try { $info = Get-Content -LiteralPath $infoPath -Raw | ConvertFrom-Json } catch { return '' }
+    if (-not $info.PSObject.Properties['description'] -or [string]::IsNullOrWhiteSpace([string]$info.description)) { return '' }
+    $lines = @(([string]$info.description -split "\r?\n") |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -match 'https?://' } |
+        ForEach-Object { if ($_.Length -gt 300) { $_.Substring(0, 300) } else { $_ } } |
+        Select-Object -First 30)
+    if ($lines.Count -eq 0) { return '' }
+    return "## Video description links`n`n" + (($lines | ForEach-Object { "- $_" }) -join "`n") + "`n`n"
+}
+
 $manifest = @(Import-Csv -LiteralPath $manifestPath)
 $updated = 0
 
@@ -82,7 +101,7 @@ synthesis_status: pending
 <!-- Mechanically generated source page. Claude synthesis (run-claude-synthesis.ps1)
      reads this file and produces concept/tool/workflow/synthesis pages from it. -->
 
-## Transcript / content
+$(Get-DescriptionLinkBlock -VaultRoot $VaultRoot -VideoId $row.video_id)## Transcript / content
 
 $(Get-Content -LiteralPath $transcriptPath -Raw)
 "@

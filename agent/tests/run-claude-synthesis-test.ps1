@@ -49,6 +49,8 @@ function Assert-True {
         $script:failCount++
         $script:failures.Add($Message)
         Write-Host "  FAIL: $Message" -ForegroundColor Red
+        # GitHub Actions annotation: a CI failure is then readable without the raw log.
+        Write-Host "::error::FAIL $(($Message -replace '[\r\n%]', ' '))"
     }
 }
 
