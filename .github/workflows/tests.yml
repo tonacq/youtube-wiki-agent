@@ -39,5 +39,8 @@ jobs:
       - name: My thinking pages suite
         run: pwsh -NoProfile -File agent/tests/my-thinking-test.ps1
 
+      - name: Manifest path repair suite
+        run: pwsh -NoProfile -File agent/tests/repair-stale-manifest-paths-test.ps1
+
       - name: Architecture conformance
         run: pwsh -NoProfile -File agent/tests/architecture-conformance-test.ps1 -RootPath .
