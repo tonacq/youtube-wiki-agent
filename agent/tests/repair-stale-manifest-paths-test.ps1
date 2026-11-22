@@ -19,7 +19,8 @@ $script:tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "wikiagent-pathfi
 New-Item -ItemType Directory -Force -Path $script:tempRoot | Out-Null
 $script:pass = 0; $script:fail = 0
 function Assert-True { param([bool]$Condition, [string]$Message)
-    if ($Condition) { $script:pass++; Write-Host "  PASS: $Message" } else { $script:fail++; Write-Host "  FAIL: $Message" -ForegroundColor Red } }
+    if ($Condition) { $script:pass++; Write-Host "  PASS: $Message" } else { $script:fail++; Write-Host "  FAIL: $Message" -ForegroundColor Red; Write-Host "::error::FAIL $($Message -replace '[
+]+',' ')" } }
 
 $header = 'video_id,title,source_type,transcript_status,transcript_attempts,clean_status,clean_transcript_file,source_status,source_file,source_created,ingest_status,synthesis_status,synthesis_last_checked,synthesis_evidence,synthesis_batch,checksum,last_updated'
 $VaultName = 'PathFixVault'
