@@ -95,6 +95,11 @@ try {
     Assert-True ($r.Out -match 'Nothing to repair') "idempotent"
     Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $v 'working') -Filter 'manifest.csv.bak_pathfix_*').Count -eq 1) "no second backup"
 }
+catch {
+    $script:fail++
+    Write-Host "::error::EXCEPTION $((($_ | Out-String) -replace '[
+]+',' | '))"
+}
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
