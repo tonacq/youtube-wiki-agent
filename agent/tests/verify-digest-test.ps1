@@ -202,6 +202,16 @@ try {
     Set-Digest $v 'b1' "## Tier B`n`n## Notes on nothing`nJust prose, no source line.`n"
     $r = Run-Verify $v
     Assert-True ((Codes $r) -contains 'missing-entry') "a plain heading with no source line is not an entry"
+
+    Write-Host "[13] closing References list (the 23 Nov Rev01 digest 232905) is not read as entries"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## [[src-a|Alpha]]`n- **Tier:** B`n- **Key statement:** one.`n`n## [[src-b|Beta]]`n- **Tier:** B`n- **Key statement:** two.`n`n## References`n- [[src-a|Alpha]]`n- [[src-b|Beta]]`n"
+    $r = Run-Verify $v
+    Assert-True (@(Codes $r).Count -eq 0) "a References list adds no no-tier errors (codes: $((Codes $r) -join ','))"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## [[src-a|Alpha]]`n- **Tier:** B`n- **Key statement:** one.`n`n## References`n- [[src-a|Alpha]]`n- [[src-b|Beta]]`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'missing-entry') "a source listed only under References is still flagged missing"
 }
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue

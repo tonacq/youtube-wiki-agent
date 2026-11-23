@@ -118,6 +118,9 @@ try {
         if ($cur) { $entries.Add($cur) }
 
         foreach ($e in $entries) {
+            # A closing "## References" (or Sources, Index, Contents) list repeats the entries' links;
+            # it is not an entry and does not count as coverage.
+            if ($e.section -match '(?i)^(references|sources|index|contents)\b') { continue }
             $entryCount++
             $links = [regex]::Matches($e.text, '\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]') | ForEach-Object { $_.Groups[1].Value.Trim() }
             if (@($links).Count -gt $LinkBudget -and ($e.section -notmatch '(?i)not processed')) { Add-Issue 'warning' 'link-budget' $d.Name "entry for [[$(@($links)[0])]] has $(@($links).Count) wikilinks (budget: $LinkBudget)" }

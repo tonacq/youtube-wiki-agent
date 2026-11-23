@@ -617,7 +617,7 @@ Work only with the file Read, Write and Edit tools. Do not write or run scripts 
 
 A source page may have a "Video description links" section. When a resource the source names (tool, template, repo, community, guide) has a URL there, keep that URL beside the resource in the page and in the digest entry's "Resources named" line, as `Name (URL)`. Never invent or guess a URL; a resource with no link listed stays as a name only.
 
-In the batch digest, write each entry's heading as: ## [[src_page|Short title]] (the source page wikilink inside the heading), followed by the "- **Tier:**" line and the other field lines. Do not use a plain-text heading with a separate Source line.
+In the batch digest, write each entry's heading as: ## [[src_page|Short title]] (the source page wikilink inside the heading), followed by the "- **Tier:**" line and the other field lines. Do not use a plain-text heading with a separate Source line, and do not add a References or Sources list at the end of the digest.
 
 $sourceList
 
