@@ -91,16 +91,26 @@ try {
         $section = ''
         $entries = [System.Collections.Generic.List[object]]::new()
         $cur = $null
-        foreach ($line in $lines) {
+        # A titled heading ("## Plain title") whose next non-blank line is a source line
+        # ("Source: [[page|Label]]", "- Source: [[...]]" or "- **Source:** [[...]]") also starts
+        # an entry; the source line is then the entry's head.
+        $sourceLineRx = '^\s*(?:[-*]\s+)?\*{0,2}Source:?\*{0,2}:?\s*(?=\[\[)'
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            $nextLine = ''
+            for ($j = $i + 1; $j -lt $lines.Count -and $j -le $i + 2; $j++) { if ($lines[$j].Trim()) { $nextLine = $lines[$j]; break } }
             if ($line -match '^#{2,6}\s+\[\[') {
                 if ($cur) { $entries.Add($cur) }
-                $cur = [pscustomobject]@{ section = $section; text = $line }
+                $cur = [pscustomobject]@{ section = $section; text = $line; headLine = $line }
+            } elseif ($line -match '^#{2,6}\s+(.+?)\s*$' -and $nextLine -match $sourceLineRx) {
+                if ($cur) { $entries.Add($cur) }
+                $cur = [pscustomobject]@{ section = $section; text = $line; headLine = ($nextLine -replace $sourceLineRx, '') }
             } elseif ($line -match '^#{2,6}\s+(.+?)\s*$') {
                 if ($cur) { $entries.Add($cur); $cur = $null }
                 $section = $Matches[1]
             } elseif ($line -match '^\s*-\s+\[\[') {
                 if ($cur) { $entries.Add($cur) }
-                $cur = [pscustomobject]@{ section = $section; text = $line }
+                $cur = [pscustomobject]@{ section = $section; text = $line; headLine = $line }
             } elseif ($cur) {
                 $cur.text += "`n" + $line
             }
@@ -115,7 +125,7 @@ try {
             # every source page linked in that head counts as covered. Links after it or further down
             # (What it adds, related pages) do not.
             # The head ends at the first dash separator, bold marker or the word Tier.
-            $firstLine = (($e.text -split "`n")[0] -split "\s[$([char]0x2014)$([char]0x2013)-]\s|\*\*|tier", 2)[0]
+            $firstLine = ($e.headLine -split "\s[$([char]0x2014)$([char]0x2013)-]\s|\*\*|\btier\b", 2)[0]
             $headLinks = @([regex]::Matches($firstLine, '\[\[([^\]\|#]+)(?:[#\|][^\]]*)?\]\]') | ForEach-Object { $_.Groups[1].Value.Trim() })
             $first = $true
             foreach ($l in $links) {

@@ -183,6 +183,25 @@ try {
     Set-Digest $v 'b1' "## Tier B`n`n- [[src-a|Alpha]] - **Tier B**. Lesson: one sentence. See also [[src-b]].`n"
     $r = Run-Verify $v
     Assert-True ((Codes $r) -contains 'missing-entry') "a source linked only in the body of another entry is still flagged"
+
+    Write-Host "[12] titled heading with the source on a Source: line (layouts seen in the 22 Nov Rev01 run)"
+    $rows = @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'), (Row 'CCC' 'src-c' 'included' 'b1'))
+    $v = New-Vault -Rows $rows
+    Set-Digest $v 'b1' "# Digest: b1`n`nAll Tier B.`n`n## Alpha title`n- **Source:** [[src-a|Alpha]]`n- **Tier:** B`n- **Key statement:** one.`n`n## Beta title`nSource: [[src-b|Beta]]. Tier B (weak signal).`n- **Key statement:** two.`n`n## Gamma title`n- Source: [[src-c|Gamma]]`n- **Tier:** B`n- **What it adds:** extends [[concept-x]].`n"
+    $r = Run-Verify $v
+    Assert-True (@(Codes $r).Count -eq 0) "bold, plain and bullet Source: lines all cover their source (codes: $((Codes $r) -join ','))"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'), (Row 'BBB' 'src-b' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Alpha title`n- **Source:** [[src-a|Alpha]]`n- **Tier:** B`n- **What it adds:** see also [[src-b]].`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'missing-entry') "a source linked only in the body of a Source:-line entry is still flagged"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Alpha title`n- **Source:** [[src-a|Alpha]]`n- **Key statement:** no tier given.`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'no-tier') "a Source:-line entry with no tier is still flagged"
+    $v = New-Vault -Rows @((Row 'AAA' 'src-a' 'included' 'b1'))
+    Set-Digest $v 'b1' "## Tier B`n`n## Notes on nothing`nJust prose, no source line.`n"
+    $r = Run-Verify $v
+    Assert-True ((Codes $r) -contains 'missing-entry') "a plain heading with no source line is not an entry"
 }
 finally {
     Remove-Item -LiteralPath $script:tempRoot -Recurse -Force -ErrorAction SilentlyContinue
